@@ -1,3 +1,9 @@
+[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![rank](https://make.fun/badge/threejs-fps-02/BGBug22/threejs-fps-entry/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![reward](https://make.fun/badge/threejs-fps-02/BGBug22/threejs-fps-entry/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+
+Entry for the [make.fun threejs-fps-02 bounty](https://make.fun/bounty/threejs-fps-02) — "Make the best three.js tactical FPS", $1,000 in USDC.
+
 # EMBERLINE v2 — Tactical FPS
 
 A round-based tactical FPS in the browser, built with three.js 0.187.0 and no
