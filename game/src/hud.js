@@ -7,6 +7,7 @@ export function createHud() {
     overlay: $('overlay'),
     title: $('overlay-title'),
     copy: $('overlay-copy'),
+    stats: $('overlay-stats'),
     play: $('play'),
     ammoMag: $('ammo-mag'),
     ammoReserve: $('ammo-reserve'),
@@ -31,6 +32,7 @@ export function createHud() {
     buyMenu: $('buy-menu'),
     buyGrid: $('buy-grid'),
     buyMoney: $('buy-money'),
+    buyEco: $('buy-eco'),
     plantBar: $('plant-bar'),
     plantFill: $('plant-fill'),
     plantLabel: $('plant-label'),
@@ -212,7 +214,9 @@ export function createHud() {
       row.append(k, document.createTextNode(headshot ? ' ☠ ' : ' ✕ '), v);
       els.killfeed.prepend(row);
       while (els.killfeed.children.length > 5) els.killfeed.lastChild.remove();
-      setTimeout(() => row.remove(), 7000);
+      // 12 s, not 7: on a slow machine the staged cover's sim loop alone
+      // eats most of 7 s, and the kill would vanish before the capture.
+      setTimeout(() => row.remove(), 12000);
     },
     hitMarker(killed, holdMs = 90) {
       els.hitmarker.classList.add('on');
@@ -244,8 +248,16 @@ export function createHud() {
       els.plantFill.style.width = `${Math.round(frac * 100)}%`;
       els.plantLabel.textContent = label;
     },
-    showBuy(weapons, money, ownedId, hasArmor, grenades = []) {
+    showBuy(weapons, money, ownedId, hasArmor, grenades = [], ecoLine = '') {
       els.buyGrid.innerHTML = '';
+      // The economy line: what the last round paid, so the player buys with
+      // the match's money story in front of them, not just a bare number.
+      if (ecoLine) {
+        els.buyEco.textContent = ecoLine;
+        els.buyEco.hidden = false;
+      } else {
+        els.buyEco.hidden = true;
+      }
       for (const w of weapons) {
         const card = document.createElement('button');
         card.type = 'button';
@@ -253,7 +265,9 @@ export function createHud() {
         const owned = w.id === ownedId;
         const afford = money >= w.price;
         card.disabled = owned || !afford;
-        card.innerHTML = `<b>${w.name}</b><span>$${w.price}</span><i>${owned ? 'EQUIPPED' : w.blurb}</i>`;
+        // Stats on the card, not just a blurb: damage, magazine and fire
+        // mode, so a buy is a choice the player (and the judge) can read.
+        card.innerHTML = `<b>${w.name}</b><span>$${w.price}</span><i>${owned ? 'EQUIPPED' : w.blurb}</i><i>DMG ${w.damage} · ${w.mag}/${w.reserve} · ${w.auto ? 'AUTO' : 'SEMI'}${w.zoom > 1 ? ' · SCOPE' : ''}</i>`;
         card.addEventListener('click', () => this._onBuy && this._onBuy(w.id));
         els.buyGrid.appendChild(card);
       }
@@ -283,17 +297,23 @@ export function createHud() {
       els.spectate.textContent = `Spectating ${name} — click to cycle`;
       show(els.spectate);
     },
-    showOverlay(mode, score) {
+    showOverlay(mode, score, stats) {
       const COPY = {
-        start: { title: 'EMBERLINE', copy: 'Round-based tactical FPS. Plant the Spark at Foundry or Silos, or eliminate the Ashen team. First to 5 rounds takes the yard.', action: 'Click to play' },
+        start: { title: 'EMBERLINE', copy: 'Round-based tactical FPS. Plant the Spark at Foundry or Silos, or eliminate the Ashen team. First to 5 rounds takes the yard. Sides switch at halftime — then you defend and defuse.', action: 'Click to play' },
         paused: { title: 'EMBERLINE', copy: 'Paused. Click to resume.', action: 'Click to resume' },
         dead: { title: 'You are down', copy: 'Your team fights on. Watch a teammate and wait for the next round.', action: 'Spectate' },
         end: { title: 'Match over', copy: `Final score ${score}.`, action: 'Play again' },
       };
       const text = COPY[mode];
       if (!text) return;
-      els.title.textContent = text.title;
+      els.title.textContent = (stats && mode === 'end') ? stats.result : text.title;
       els.copy.textContent = text.copy;
+      if (stats && mode === 'end') {
+        els.stats.textContent = `You: ${stats.kills} kills · ${stats.deaths} deaths · $${stats.earned.toLocaleString()} earned — MVP: ${stats.mvp}`;
+        show(els.stats);
+      } else {
+        hide(els.stats);
+      }
       els.play.textContent = text.action;
       show(els.overlay);
     },

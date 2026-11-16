@@ -1,9 +1,9 @@
-// EMBERLINE v3 — the entry program for the threejs-fps-02 bounty (Node 22, stdlib only).
-// v3 adds a Molotov (fire-pool area denial, thrown by the player and by one
-// Ashen defender), a red-and-white Beacon lighthouse tower over Site A, a
-// brighter daylight sky over the v2 sunset, and a deterministic spray pattern,
-// on top of v2's smoke/flash/frag grenades, hearing bots with radio callouts
-// and a team plan, live minimap and giant site signs.
+// EMBERLINE v5 — the entry program for the threejs-fps-02 bounty (Node 22, stdlib only).
+// v5 adds the Kilnyard formula on top of v4's bright day yard, Beacon lighthouse,
+// Molotov grenades and spray pattern: a halftime side switch (Ember attacks
+// rounds 1-4, defends rounds 5-9 and the player defuses with E), a buy menu
+// with weapon stats and a per-round economy line, a victory screen with match
+// stats and MVP, and radio callouts for the plan, planting, defusing and backup.
 // It hands the game in: copies game/ and screenshots/ from beside this file into
 // the output directory and writes dossier.json with the vendored make.fun library,
 // using the scorer's own caps from reference/gate.json. Screenshots are ordered
@@ -64,7 +64,7 @@ writeFileSync(join(out, 'dossier.json'), dossier);
 
 // Report what was handed in, so a human can see at a glance that it worked.
 const shots = shotFiles.map((f) => `${f} (${statSync(join(out, 'screenshots', f)).size} B)`);
-console.log(`EMBERLINE v3 handed in to ${out}`);
+console.log(`EMBERLINE v5 handed in to ${out}`);
 console.log(`  game entries: ${countEntries(join(out, 'game'))}`);
 console.log(`  screenshots: ${shots.join(', ')}`);
 console.log(`  dossier.json: ${statSync(join(out, 'dossier.json')).size} bytes`);

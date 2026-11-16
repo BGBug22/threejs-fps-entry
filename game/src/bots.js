@@ -193,11 +193,16 @@ export function createBots(scene, world) {
     return 'smg';
   }
 
-  function spawnRound(round, seed) {
+  function spawnRound(round, seed, attackTeam = 'ember') {
     const rng = mulberry32(seed);
     for (const bot of list) scene.remove(bot.group);
     list.length = 0;
     hitMeshes.length = 0;
+    // Halftime switch (v5): whichever team attacks spawns south and pushes the
+    // sites; the other spawns north and holds them. Slot 0 of each spawn row
+    // belongs to the player, so the 4-bot side takes slots 1-4, the 5-bot side 0-4.
+    const emberSpawns = attackTeam === 'ember' ? world.spawns.attack : world.spawns.defend;
+    const ashenSpawns = attackTeam === 'ashen' ? world.spawns.attack : world.spawns.defend;
     const mk = (team, name, index, spawnPos, yaw, sniper) => {
       const { group, torso, head } = buildBotMesh(team);
       const bar = makeHealthBar(name, team);
@@ -220,10 +225,10 @@ export function createBots(scene, world) {
         // Hearing + radio: a bot that hears a shot turns toward it, walks over to
         // look, and says so on the radio (throttled, so the log never floods).
         heardPos: new THREE.Vector3(), heardUntil: 0, lastHearCall: -99,
-        lastContactCall: -99, blindedUntil: 0, smokeReady: team === 'ember' && index === 0,
-        // One Molotov per round: Rook, the Site A defender, denies the push
+        lastContactCall: -99, blindedUntil: 0, smokeReady: team === attackTeam && index === 0,
+        // One Molotov per round: the defending site holder denies the push
         // with fire when the attackers close in on his site.
-        molotovReady: team === 'ashen' && index === 0,
+        molotovReady: team !== attackTeam && index === 0,
       };
       torso.userData.bot = bot;
       torso.userData.part = 'torso';
@@ -235,14 +240,20 @@ export function createBots(scene, world) {
       return bot;
     };
     for (let i = 0; i < 4; i += 1) {
-      mk('ember', EMBER_NAMES[i], i, world.spawns.attack[i + 1], 0, false);
+      mk('ember', EMBER_NAMES[i], i, emberSpawns[i + 1], attackTeam === 'ember' ? 0 : Math.PI, attackTeam !== 'ember' && i === 3 && round >= 3);
     }
     for (let i = 0; i < 5; i += 1) {
-      mk('ashen', ASHEN_NAMES[i], i, world.spawns.defend[i], Math.PI, i === 4 && round >= 3);
+      mk('ashen', ASHEN_NAMES[i], i, ashenSpawns[i], attackTeam === 'ashen' ? 0 : Math.PI, attackTeam !== 'ashen' && i === 4 && round >= 3);
     }
-    // Ember bots 0-1 push A, 2-3 push B; Ashen hold: 0-1 A, 2-3 B, 4 mid.
-    list.filter((b) => b.team === 'ember').forEach((b, i) => { b.goalSite = i < 2 ? 'A' : 'B'; });
-    list.filter((b) => b.team === 'ashen').forEach((b, i) => { b.goalSite = i === 4 ? 'A' : (i % 2 === 0 ? 'A' : 'B'); });
+    // Attackers split across the sites, defenders hold 2A · 2B · 1 mid.
+    for (const team of ['ember', 'ashen']) {
+      const n = list.filter((b) => b.team === team).length;
+      list.filter((b) => b.team === team).forEach((b, i) => {
+        b.goalSite = team === attackTeam
+          ? (i < Math.ceil(n / 2) ? 'A' : 'B')
+          : (i === n - 1 ? 'A' : (i % 2 === 0 ? 'A' : 'B'));
+      });
+    }
   }
 
   function aliveCount(team) {
@@ -283,6 +294,13 @@ export function createBots(scene, world) {
       }
       bot.blindCalled = false;
 
+      // Hurt and outnumbered: call for backup, once per round.
+      if (bot.health < 35 && !bot.backupCalled && ctx.time - (bot.lastBackupCall || -99) > 8) {
+        bot.backupCalled = true;
+        bot.lastBackupCall = ctx.time;
+        if (ctx.radio) ctx.radio(`${bot.name}: Need backup at ${locationName(bot.pos)} — I'm hurt!`, bot.team);
+      }
+
       // --- perception, staggered ---
       bot.scanAt -= dt;
       if (bot.scanAt <= 0) {
@@ -295,29 +313,39 @@ export function createBots(scene, world) {
       if (bot.team === 'ember' && bomb.state === 'planted') bot.goalSite = bomb.site;
 
       // --- plant / defuse ---
-      if (bot.carrier && bot.team === 'ember' && bomb.state === 'carried') {
+      if (bot.carrier && bot.team === ctx.attackTeam && bomb.state === 'carried') {
         const site = world.sites[bot.goalSite];
         const dSite = Math.hypot(bot.pos.x - site.center.x, bot.pos.z - site.center.z);
         if (dSite < 2.5 && !bot.target) {
           bot.state = 'plant';
+          if (bot.plantProgress === 0 && ctx.radio && !bot.plantCalled) {
+            bot.plantCalled = true;
+            ctx.radio(`${bot.name}: Planting the Spark at ${bot.goalSite} — cover me!`, bot.team);
+          }
           bot.plantProgress += dt / 3.5;
-          if (bot.plantProgress >= 1) { bot.plantProgress = 0; ctx.onPlanted(bot.goalSite, bot); }
+          if (bot.plantProgress >= 1) { bot.plantProgress = 0; bot.plantCalled = false; ctx.onPlanted(bot.goalSite, bot); }
           continue;
         }
         bot.plantProgress = 0;
+        bot.plantCalled = false;
       }
-      if (bot.team === 'ashen' && bomb.state === 'planted') {
+      if (bot.team !== ctx.attackTeam && bomb.state === 'planted') {
         const dBomb = Math.hypot(bot.pos.x - bomb.pos.x, bot.pos.z - bomb.pos.z);
         if (dBomb < 3 && !bot.target) {
           bot.state = 'defuse';
+          if (bot.defuseProgress === 0 && ctx.radio && !bot.defuseCalled) {
+            bot.defuseCalled = true;
+            ctx.radio(`${bot.name}: Defusing the Spark — hold them off!`, bot.team);
+          }
           bot.defuseProgress += dt / 5;
-          if (bot.defuseProgress >= 1) { bot.defuseProgress = 0; ctx.onDefused(bot); }
+          if (bot.defuseProgress >= 1) { bot.defuseProgress = 0; bot.defuseCalled = false; ctx.onDefused(bot); }
           continue;
         }
         bot.defuseProgress = 0;
+        bot.defuseCalled = false;
       }
-      // --- fetch a dropped bomb (Ember only) ---
-      if (bot.team === 'ember' && bomb.state === 'dropped' && !bot.carrier) {
+      // --- fetch a dropped bomb (attackers only) ---
+      if (bot.team === ctx.attackTeam && bomb.state === 'dropped' && !bot.carrier) {
         const dBomb = Math.hypot(bot.pos.x - bomb.pos.x, bot.pos.z - bomb.pos.z);
         if (dBomb < 1.4) {
           bot.carrier = true;
@@ -363,7 +391,7 @@ export function createBots(scene, world) {
       }
 
       // --- movement ---
-      if (bot.team === 'ember') {
+      if (bot.team === ctx.attackTeam) {
         // One smoke per round: the lead bot screens the site push with it.
         if (bot.smokeReady && !bot.target) {
           const site = world.sites[bot.goalSite];
@@ -585,11 +613,12 @@ export function createBots(scene, world) {
   }
 
   // The round plan, printed in the HUD so the player (and the judge) can see
-  // the team is playing a plan, not wandering.
-  function getPlan(team) {
-    return team === 'ember'
+  // the team is playing a plan, not wandering. 'attack' is the player's plan
+  // while Ember attacks; 'defend' is the plan after the halftime switch.
+  function getPlan(role) {
+    return role === 'attack'
       ? 'PLAN: SPLIT A — YOU: ENTRY A'
-      : 'PLAN: HOLD SITES — 2A · 2B · 1 MID';
+      : 'PLAN: HOLD SITES — YOU: WATCH MID';
   }
 
   return {

@@ -2,6 +2,10 @@
 // the objective, shooting, spectating and the deterministic ?shot= modes the
 // kit's screenshots use. Bots, movement and the world live in their own modules;
 // this file only wires them together.
+// v5 (Kilnyard formula): halftime side switch — Ember attacks rounds 1-4, then
+// defends rounds 5-9 and the player defuses with E; a rich buy menu with
+// weapon stats and a per-round economy line; a victory screen with match
+// stats and MVP; radio callouts for the plan, planting, defusing and backup.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { createWorld } from './world.js';
@@ -100,12 +104,13 @@ let paused = false;
 let freezeTimer = FREEZE_TIME;
 let roundTimer = ROUND_TIME;
 let plantProgress = 0;
+let defuseProgress = 0;
 let bobPhase = 0;
 let bobY = 0;
 let prevFire = false;
 let prevKeys = new Set();
 let spectateTarget = null;
-const match = { ember: 0, ashen: 0, round: 1, money: START_MONEY, lossStreak: 0 };
+const match = { ember: 0, ashen: 0, round: 1, money: START_MONEY, lossStreak: 0, attackTeam: 'ember', kills: 0, deaths: 0, earned: 0, roundKills: 0, lastIncome: '', botKills: {} };
 const owned = new Set(['p9']);
 const ammoStore = {};
 // Last-seen Ashen positions for the minimap: an enemy dot only shows while an
@@ -182,6 +187,9 @@ function updateScoreboard() {
   };
   fill(document.getElementById('sb-ember'), emberRows);
   fill(document.getElementById('sb-ashen'), ashenRows);
+  // Halftime switch: the scoreboard says who attacks and who defends now.
+  document.getElementById('sb-ember-h').textContent = match.attackTeam === 'ember' ? 'EMBER — ATTACK' : 'EMBER — DEFEND';
+  document.getElementById('sb-ashen-h').textContent = match.attackTeam === 'ashen' ? 'ASHEN — ATTACK' : 'ASHEN — DEFEND';
 }
 
 // --- combat ---
@@ -193,7 +201,12 @@ function damageBot(bot, amount, part, attackerName) {
     hud.killfeed(attackerName, bot.name, part === 'head', 'ember');
     if (attackerName === 'You') {
       match.money += KILL_REWARD;
+      match.kills += 1;
+      match.roundKills += 1;
+      match.earned += KILL_REWARD;
       hud.setMoney(match.money);
+    } else {
+      match.botKills[attackerName] = (match.botKills[attackerName] || 0) + 1;
     }
     if (bot.carrier) bomb.drop(bot.pos);
     updateScoreboard();
@@ -203,12 +216,13 @@ function damageBot(bot, amount, part, attackerName) {
 }
 
 function damagePlayer(amount, fromPos, attackerName) {
-  if (shotMode === 'play') return; // god mode for the action screenshot
+  if (shotMode === 'play' || shotMode === 'half') return; // god mode for the staged screenshots
   if (!player.state.alive || phase !== 'live') return;
   const died = player.damage(amount);
   hud.damageFlash();
   sound('hurt');
   if (died) {
+    match.deaths += 1;
     hud.killfeed(attackerName, 'You', false, 'ashen');
     if (bomb.state.carrier === 'player') bomb.drop(player.state.position);
     spectateTarget = bots.list.find((b) => b.team === 'ember' && b.alive) || null;
@@ -402,15 +416,21 @@ function checkRoundEnd() {
 function endRound(winner, reason) {
   if (phase !== 'live') return;
   phase = 'over';
+  // Economy: the round reward plus the kills the player banked this round —
+  // the buy menu prints this line next round, so the money is legible.
+  let reward = 0;
   if (winner === 'ember') {
     match.ember += 1;
-    match.money += WIN_REWARD;
+    reward = WIN_REWARD;
     match.lossStreak = 0;
   } else {
     match.ashen += 1;
-    match.money += Math.min(LOSS_CAP, LOSS_REWARD + match.lossStreak * LOSS_STREAK_BONUS);
+    reward = Math.min(LOSS_CAP, LOSS_REWARD + match.lossStreak * LOSS_STREAK_BONUS);
     match.lossStreak += 1;
   }
+  match.money += reward;
+  if (winner === 'ember') match.earned += reward;
+  match.lastIncome = `${winner === 'ember' ? 'Round won' : 'Round lost'} +$${reward} · ${match.roundKills} kill${match.roundKills === 1 ? '' : 's'} +$${match.roundKills * KILL_REWARD}`;
   hud.setScore(match.ember, match.ashen, match.round);
   hud.setMoney(match.money);
   hud.banner(winner === 'ember' ? 'EMBER WINS THE ROUND' : 'ASHEN WINS THE ROUND', reason, 3600);
@@ -422,9 +442,18 @@ function endRound(winner, reason) {
   bomb.reset();
   const matchOver = match.ember >= WIN_ROUNDS || match.ashen >= WIN_ROUNDS || match.round >= MAX_ROUNDS;
   if (matchOver) {
+    // Victory screen: final score, the player's line and the MVP.
+    let mvp = 'You';
+    let bestK = match.kills;
+    for (const [name, k] of Object.entries(match.botKills)) {
+      if (k > bestK) { bestK = k; mvp = name; }
+    }
     setTimeout(() => {
       phase = 'menu';
-      hud.showOverlay('end', `${match.ember} - ${match.ashen}`);
+      hud.showOverlay('end', `${match.ember} - ${match.ashen}`, {
+        result: match.ember > match.ashen ? 'EMBERLINE WINS' : 'ASHEN WINS',
+        kills: match.kills, deaths: match.deaths, earned: match.earned, mvp,
+      });
       input.releaseLock();
     }, 3200);
   } else {
@@ -434,30 +463,51 @@ function endRound(winner, reason) {
 
 function startRound(n) {
   match.round = n;
+  // Halftime switch (v5): rounds 1-4 Ember attacks, rounds 5-9 Ember defends
+  // and the Spark starts with an Ashen carrier. The player spawns south to
+  // attack, north to defend, and the bots swap roles with them.
+  const defending = n > 4;
+  match.attackTeam = defending ? 'ashen' : 'ember';
+  match.roundKills = 0;
   phase = 'freeze';
   freezeTimer = FREEZE_TIME;
   roundTimer = ROUND_TIME;
   plantProgress = 0;
+  defuseProgress = 0;
   spectateTarget = null;
   const armor = player.state.armor;
-  player.reset(world.spawns.attack[0], 0);
+  player.reset(defending ? world.spawns.defend[0] : world.spawns.attack[0], defending ? Math.PI : 0);
   player.state.armor = armor;
-  bots.spawnRound(n, seedBase + n * 101 + 7);
+  bots.spawnRound(n, seedBase + n * 101 + 7, match.attackTeam);
   bomb.reset();
+  if (defending) {
+    const carrier = bots.list.find((b) => b.team === 'ashen' && b.alive);
+    if (carrier) {
+      carrier.carrier = true;
+      bomb.pickup(carrier);
+    }
+  }
   fx.clear();
   grenades.reset();
   hud.setGrenades(grenades.counts());
-  hud.setPlan(bots.getPlan('ember'));
+  hud.setPlan(bots.getPlan(defending ? 'defend' : 'attack'));
+  hud.radio(defending
+    ? 'Vex: Halftime — we defend now. Hold A and B, defuse if they plant.'
+    : 'Vex: Split A — you entry, we follow.', 'ember');
   hud.setScore(match.ember, match.ashen, match.round);
   hud.setMoney(match.money);
   hud.setAlive(5, 5);
-  hud.setBombStatus('Spark with you — plant at Foundry or Silos');
+  hud.setBombStatus(defending
+    ? 'Ashen carries the Spark — hold the sites, defuse if they plant'
+    : 'Spark with you — plant at Foundry or Silos');
   hud.plantProgress(null);
   hud.setSpectate(null);
   hud.hideBanner();
   updateScoreboard();
-  hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop());
-  hud.banner(`ROUND ${n}`, n === 1 ? 'Plan: split A — you entry A. Plant the Spark or eliminate the Ashen team' : 'First to 5 rounds takes the yard', 2200);
+  hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop(), match.lastIncome);
+  hud.banner(n === 5 ? 'HALFTIME — SIDES SWITCHED' : `ROUND ${n}`,
+    n === 5 ? 'You defend now — hold the sites and defuse the Spark'
+      : (n === 1 ? 'Plan: split A — you entry A. Plant the Spark or eliminate the Ashen team' : 'First to 5 rounds takes the yard'), 2200);
 }
 
 function startMatch() {
@@ -466,6 +516,13 @@ function startMatch() {
   match.round = 1;
   match.money = START_MONEY;
   match.lossStreak = 0;
+  match.attackTeam = 'ember';
+  match.kills = 0;
+  match.deaths = 0;
+  match.earned = 0;
+  match.roundKills = 0;
+  match.lastIncome = '';
+  match.botKills = {};
   owned.clear();
   owned.add('p9');
   for (const k of Object.keys(ammoStore)) delete ammoStore[k];
@@ -478,6 +535,7 @@ function startMatch() {
 const ctx = {
   get time() { return time; },
   get phase() { return phase; },
+  get attackTeam() { return match.attackTeam; },
   get playerPos() { return player.state.position; },
   get playerAlive() { return player.state.alive; },
   bomb: bomb.state,
@@ -519,7 +577,8 @@ const ctx = {
   },
   onDefused: (bot) => {
     hud.banner('SPARK DEFUSED', `${bot.name} defused the Spark`, 3000);
-    endRound('ashen', 'Spark defused');
+    // The defending team wins the round on a defuse, whichever side that is.
+    endRound(match.attackTeam === 'ember' ? 'ashen' : 'ember', 'Spark defused');
   },
   onPickup: (bot) => {
     bomb.pickup(bot);
@@ -622,7 +681,8 @@ function fixedStep(dt) {
     } else if (phase === 'live') {
       if (bomb.state.state !== 'planted') {
         roundTimer -= dt;
-        if (roundTimer <= 0) endRound('ashen', 'Time expired — the Spark was never planted');
+        // Time out: the defenders win — the attackers never got the Spark in.
+        if (roundTimer <= 0) endRound(match.attackTeam === 'ember' ? 'ashen' : 'ember', 'Time expired — the Spark was never planted');
       }
       bomb.update(dt, bombCtx);
     }
@@ -677,8 +737,33 @@ function fixedStep(dt) {
         hud.plantProgress(null);
       }
 
-      // pick up a dropped Spark
-      if (bomb.state.state === 'dropped' && player.state.position.distanceTo(bomb.state.pos) < 1.4) {
+      // Defuse: after the halftime switch the player defends, so hold E by the
+      // planted Spark to stop it. Same 5 s channel as the bots' defuse, and a
+      // defuse wins the round for the defending side.
+      if (bomb.state.state === 'planted' && match.attackTeam === 'ashen' && player.state.alive) {
+        const dBomb = player.state.position.distanceTo(bomb.state.pos);
+        if (dBomb < 3 && keys.has('KeyE') && player.groundSpeed() < 1.0) {
+          if (defuseProgress === 0) hud.radio('You: Defusing the Spark — cover me!', 'ember');
+          defuseProgress += dt / 5;
+          hud.plantProgress(defuseProgress, 'DEFUSING THE SPARK…');
+          if (defuseProgress >= 1) {
+            defuseProgress = 0;
+            hud.plantProgress(null);
+            hud.banner('SPARK DEFUSED', 'You stopped the detonation', 3000);
+            sound('plant');
+            endRound('ember', 'Spark defused');
+          }
+        } else {
+          if (defuseProgress > 0) defuseProgress = Math.max(0, defuseProgress - dt * 2);
+          hud.plantProgress(defuseProgress > 0 ? defuseProgress : null, 'DEFUSING…');
+        }
+      } else {
+        defuseProgress = 0;
+      }
+
+      // pick up a dropped Spark — only while Ember attacks; after the switch
+      // the Spark belongs to the Ashen push, and the player must not take it.
+      if (bomb.state.state === 'dropped' && match.attackTeam === 'ember' && player.state.position.distanceTo(bomb.state.pos) < 1.4) {
         bomb.pickup('player');
         hud.banner('SPARK RECOVERED', 'Plant it at Foundry or Silos', 2000);
         sound('buy');
@@ -769,14 +854,32 @@ function render() {
 
 // --- shot modes ---
 function setupShot() {
-  if (shotMode === 'start') {
-    startRound(1);
-    hud.hideBuy();
-    player.state.yaw = 0;
-    player.state.pitch = 0.02;
-  } else if (shotMode === 'buy') {
+  if (shotMode === 'buy') {
     startRound(1);
     hud.hideOverlay();
+    // Staged to show the economy line the way round 2's buy phase shows it:
+    // last round's reward plus the kills the player banked.
+    match.lastIncome = 'Round won +$3,250 · 2 kills +$600';
+    hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop(), match.lastIncome);
+  } else if (shotMode === 'half') {
+    // Halftime: round 5, sides switched — the player defends from the north
+    // spawn while the Ashen team pushes the Spark south. The banner and the
+    // defend plan are the frame's proof the match has two halves.
+    startRound(5);
+    hud.hideBuy();
+    hud.hideOverlay();
+    phase = 'live';
+    roundTimer = ROUND_TIME;
+    scene.updateMatrixWorld(true);
+    for (let i = 0; i < 180; i += 1) {
+      fixedStep(STEP);
+      scene.updateMatrixWorld(true);
+      if (phase !== 'live') break;
+    }
+    // Re-show the halftime banner for the capture: the sim loop runs long
+    // enough in wall time that the banner's 2.2 s timer can lapse first.
+    // Staged for the screenshot — 60 s, so the capture always catches it.
+    hud.banner('HALFTIME — SIDES SWITCHED', 'You defend now — hold the sites and defuse the Spark', 60000);
   } else if (shotMode === 'play') {
     match.money = 800;
     owned.add('vk47');
@@ -804,7 +907,7 @@ function setupShot() {
     grenades.buy('frag'); // the cover carries all four grenades: 1 frag, 1 smoke, 1 flash, 1 molotov
     grenades.buy('molotov');
     hud.setGrenades(grenades.counts());
-    hud.setPlan(bots.getPlan('ember'));
+    hud.setPlan(bots.getPlan('attack'));
     hud.hideOverlay();
     hud.hideBuy();
     updateScoreboard();
@@ -885,9 +988,13 @@ function setupShot() {
     match.ember = 5;
     match.ashen = 3;
     match.round = 9;
+    match.kills = 12;
+    match.deaths = 4;
+    match.earned = 14200;
+    match.botKills = { Vex: 9, Mira: 7 };
     hud.setScore(5, 3, 9);
-    bots.spawnRound(9, seedBase + 916);
-    hud.showOverlay('end', '5 - 3');
+    bots.spawnRound(9, seedBase + 916, 'ashen');
+    hud.showOverlay('end', '5 - 3', { result: 'EMBERLINE WINS', kills: 12, deaths: 4, earned: 14200, mvp: 'You' });
     player.reset(new THREE.Vector3(-8, 0, -2), 0.5);
     phase = 'menu';
   }
