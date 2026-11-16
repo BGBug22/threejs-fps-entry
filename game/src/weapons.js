@@ -41,34 +41,78 @@ export const WEAPONS = {
 export const ARMOR_PRICE = 650;
 export const ARMOR_VALUE = 50;
 
-// The view model: a box-built gun that lives on the camera, with a muzzle flash
-// and a kick that settles back. It owns the magazine and the reload, never the ray.
+// The view model: a multi-part gun that lives on the camera — receiver, long
+// barrel with a muzzle brake, angled magazine, foregrip, stock and a sight on
+// top — with a star-shaped muzzle flash and a kick that settles back. It owns
+// the magazine and the reload, never the ray.
 export function createWeaponView(camera) {
   const grip = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.hairline), roughness: 0.7, metalness: 0.2 });
   const body = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.ink), roughness: 0.5, metalness: 0.35 });
   const accent = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.accent), roughness: 0.45, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: new THREE.Color('#241a12'), roughness: 0.6, metalness: 0.3 });
 
   const model = new THREE.Group();
-  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.1, 0.42), body);
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.4), grip);
-  barrel.position.set(0, 0.025, -0.38);
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.08, 0.22), grip);
-  stock.position.set(0, -0.02, 0.3);
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.08), accent);
-  sight.position.set(0, 0.075, -0.1);
-  model.add(receiver, barrel, stock, sight);
-  model.position.set(0.24, -0.2, -0.42);
+  // Dark rifle, bright accents: the gun must read as a gun, not a pale plank.
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.11, 0.46), dark);
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.44), grip);
+  barrel.position.set(0, 0.03, -0.42);
+  const brake = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.09), accent);
+  brake.position.set(0, 0.03, -0.66);
+  const magazine = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.09), accent);
+  magazine.position.set(0, -0.13, 0.02);
+  magazine.rotation.x = 0.25;
+  const foregrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.14, 0.07), grip);
+  foregrip.position.set(0, -0.09, -0.3);
+  foregrip.rotation.x = 0.3;
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.24), dark);
+  stock.position.set(0, -0.02, 0.32);
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.06, 0.1), accent);
+  sight.position.set(0, 0.085, -0.08);
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.02, 0.3), body);
+  rail.position.set(0, 0.06, -0.28);
+  model.add(receiver, barrel, brake, magazine, foregrip, stock, sight, rail);
+  model.scale.setScalar(1.15);
+  model.position.set(0.28, -0.25, -0.46);
   camera.add(model);
 
+  // Star-shaped muzzle flash: a canvas-drawn 4-point star, additive, so the
+  // shot reads as a burst of light even in a still screenshot.
+  function starTexture() {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const g = c.getContext('2d');
+    g.translate(64, 64);
+    g.fillStyle = '#ffd23e';
+    g.beginPath();
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i * Math.PI) / 4;
+      const r = i % 2 === 0 ? 62 : 14;
+      g.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.arc(0, 0, 16, 0, Math.PI * 2);
+    g.fill();
+    const texture = new THREE.CanvasTexture(c);
+    return texture;
+  }
+  // The star must read against a bright sunset yard, so it draws on top of
+  // the world (like a real view-model flash) and is bigger than the v1 flash.
+  // Normal blending, not additive: an additive star vanishes against the
+  // bright orange walls and the white smoke, a solid yellow star reads on
+  // any background.
   const flash = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.26, 0.26),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.accent), transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }),
+    new THREE.PlaneGeometry(0.7, 0.7),
+    new THREE.MeshBasicMaterial({ map: starTexture(), transparent: true, opacity: 0.95, depthWrite: false, depthTest: false, side: THREE.DoubleSide }),
   );
-  flash.position.set(0.24, -0.18, -0.95);
+  flash.position.set(0.28, -0.22, -1.0);
   flash.visible = false;
   camera.add(flash);
-  const flashLight = new THREE.PointLight(new THREE.Color(PALETTE.accent), 0, 5);
-  flashLight.position.set(0.24, -0.16, -0.6);
+  const flashLight = new THREE.PointLight(new THREE.Color(PALETTE.accent), 0, 6);
+  flashLight.position.set(0.28, -0.2, -0.7);
   camera.add(flashLight);
 
   const state = { id: 'p9', def: WEAPONS.p9, mag: WEAPONS.p9.mag, reserve: WEAPONS.p9.reserve, cooldown: 0, reloadLeft: 0, flash: 0, kick: 0 };
@@ -77,11 +121,11 @@ export function createWeaponView(camera) {
     state.cooldown = Math.max(0, state.cooldown - dt);
     state.flash = Math.max(0, state.flash - dt);
     state.kick += (0 - state.kick) * Math.min(1, dt * 14);
-    model.position.z = -0.42 + state.kick;
+    model.position.z = -0.46 + state.kick;
     model.rotation.x = state.kick * 2.2;
     flash.visible = state.flash > 0;
     flash.rotation.z = state.flash * 30;
-    flashLight.intensity = state.flash > 0 ? 18 : 0;
+    flashLight.intensity = state.flash > 0 ? 22 : 0;
     if (state.reloadLeft > 0) {
       state.reloadLeft = Math.max(0, state.reloadLeft - dt);
       model.rotation.x = -0.55 * Math.min(1, (state.def.reloadTime - state.reloadLeft) * 2);
@@ -125,8 +169,14 @@ export function createWeaponView(camera) {
     },
     pullTrigger() {
       state.cooldown = state.def.gap;
-      state.flash = 0.06;
+      state.flash = 0.2;
       state.kick = state.id === 'awp' ? 0.12 : 0.055;
+      // Show the flash immediately: in the screenshot the frame loop may not
+      // run another fixed step before the capture, and step() is the only
+      // other place that sets flash.visible — without this the star never
+      // appears in a captured frame.
+      flash.visible = true;
+      flashLight.intensity = 22;
     },
     takeRound() {
       if (state.mag <= 0) return false;

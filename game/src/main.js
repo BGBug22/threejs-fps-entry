@@ -10,6 +10,7 @@ import { WEAPONS, ARMOR_PRICE, ARMOR_VALUE, createWeaponView } from './weapons.j
 import { createFx } from './fx.js';
 import { createBots } from './bots.js';
 import { createBomb } from './bomb.js';
+import { createGrenades, GRENADES } from './grenades.js';
 import { createAudio } from './audio.js';
 import { createInput } from './input.js';
 import { createHud } from './hud.js';
@@ -45,6 +46,9 @@ function mulberry32(initial) {
 
 const seedBase = shotMode ? seedParam : (Date.now() % 100000);
 const rng = mulberry32(seedBase);
+// The cover's last shot fires in the frame just before __shotReady (see the
+// double-RAF at the end of setupShot), not at the end of the sim loop.
+let finalShotPending = false;
 
 // --- renderer / scene ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -53,7 +57,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.35;
 document.getElementById('app').prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -68,6 +72,7 @@ const weaponView = createWeaponView(camera);
 const fx = createFx(scene);
 const bots = createBots(scene, world);
 const bomb = createBomb(scene);
+const grenades = createGrenades(scene, world.colliders, fx);
 const audio = createAudio();
 const input = createInput(renderer.domElement, (locked) => {
   if (locked) {
@@ -78,6 +83,7 @@ const input = createInput(renderer.domElement, (locked) => {
   }
 });
 const hud = createHud();
+hud.setMinimapWalls(world.minimapRects);
 
 // --- match state ---
 let time = 0;
@@ -94,6 +100,10 @@ let spectateTarget = null;
 const match = { ember: 0, ashen: 0, round: 1, money: START_MONEY, lossStreak: 0 };
 const owned = new Set(['p9']);
 const ammoStore = {};
+// Last-seen Ashen positions for the minimap: an enemy dot only shows while an
+// Ember bot is looking at it or the player just hit it (4 s), never a wallhack.
+const seenAshen = new Map();
+let mmTick = 0;
 
 // --- invisible player hitboxes for bot fire ---
 const playerMeshes = new Set();
@@ -141,6 +151,9 @@ function sound(kind, arg) {
     case 'roundLose': audio.roundLose(); break;
     case 'explosion': audio.explosion(); break;
     case 'click': audio.click(); break;
+    case 'throw': audio.throw(); break;
+    case 'smoke': audio.smoke(); break;
+    case 'flash': audio.flash(); break;
     default: break;
   }
 }
@@ -165,6 +178,8 @@ function updateScoreboard() {
 
 // --- combat ---
 function damageBot(bot, amount, part, attackerName) {
+  // The minimap remembers where the player just hit an enemy.
+  if (attackerName === 'You') seenAshen.set(bot.id, { x: bot.pos.x, z: bot.pos.z, at: time });
   const died = bots.damage(bot, amount);
   if (died) {
     hud.killfeed(attackerName, bot.name, part === 'head', 'ember');
@@ -199,7 +214,7 @@ function damagePlayer(amount, fromPos, attackerName) {
 
 function tryShoot() {
   const w = weaponView.state;
-  if (!w.ready()) {
+  if (!weaponView.ready()) {
     if (w.mag === 0 && w.reserve > 0) { weaponView.reload(); sound('reload'); }
     else if (w.mag === 0) sound('dry');
     return;
@@ -221,11 +236,15 @@ function tryShoot() {
   const end = hit ? hit.point.clone() : origin.clone().addScaledVector(dir, 120);
   fx.tracer(muzzle, end);
   sound('shot', def.id);
+  // Every shot is a sound event: bots inside 20 m hear it, turn, and call it in.
+  if (ctx) ctx.noise(origin, 'shot', 20, null);
   player.recoil(def.id === 'awp' ? 0.05 : 0.011, (Math.random() - 0.5) * 0.006);
   if (hit) {
     fx.impact(hit.point);
     const hitBot = hit.object.userData.bot;
-    if (hitBot && hitBot.alive) {
+    // No friendly fire: a teammate in the line of fire stops the bullet, but
+    // takes no damage and never shows in the killfeed as your victim.
+    if (hitBot && hitBot.alive && hitBot.team === 'ashen') {
       const dmg = def.damage * (hit.object.userData.part === 'head' ? def.headMult : 1);
       const died = damageBot(hitBot, dmg, hit.object.userData.part, 'You');
       hud.hitMarker(died);
@@ -244,6 +263,116 @@ function switchWeapon(id) {
   if (stored) weaponView.setAmmo(stored.mag, stored.reserve);
   hud.setAmmo(weaponView.state.mag, weaponView.state.reserve, WEAPONS[id].name.toUpperCase());
   sound('click');
+}
+
+// --- grenades ---
+function grenadeShop() {
+  return Object.values(GRENADES).map((g) => ({ ...g, count: grenades.inventory[g.id] }));
+}
+
+function throwPlayerGrenade(type) {
+  if (!player.state.alive || phase !== 'live') return false;
+  // Throw from the player's eye along their aim — the camera follows the same
+  // state in live play, and in the scripted shot the camera is not placed yet.
+  const yaw = player.state.yaw;
+  const pitch = player.state.pitch;
+  const dir = new THREE.Vector3(
+    -Math.sin(yaw) * Math.cos(pitch),
+    Math.sin(pitch),
+    -Math.cos(yaw) * Math.cos(pitch),
+  );
+  const origin = new THREE.Vector3(
+    player.state.position.x,
+    player.state.position.y + player.state.eye,
+    player.state.position.z,
+  ).addScaledVector(dir, 0.5);
+  origin.y -= 0.1;
+  if (!grenades.throw(type, origin, dir)) return false;
+  sound('throw');
+  hud.setGrenades(grenades.counts());
+  return true;
+}
+
+// Aim the player at one Ashen bot and fire once. Used by the scripted cover
+// shot so the frame holds a real tracer and muzzle flash.
+function nearestAshenBot() {  let best = null;
+  let bestD = Infinity;
+  for (const b of bots.list) {
+    if (b.team !== 'ashen' || !b.alive) continue;
+    const d = Math.hypot(b.pos.x - player.state.position.x, b.pos.z - player.state.position.z);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return best;
+}
+
+// Put the camera where the player stands, exactly as render() does each
+// frame. In the scripted shot render() has not run yet, so without this the
+// camera still sits at the world origin and every scripted shot fires from
+// the floor at (0,0,0) instead of from the player's eye.
+function syncCamera() {
+  camera.position.set(player.state.position.x, player.state.position.y + player.state.eye, player.state.position.z);
+  camera.rotation.set(player.state.pitch, player.state.yaw, 0, 'YXZ');
+  camera.updateMatrixWorld();
+}
+
+function fireAtBot(bot) {
+  if (!bot) return;
+  const eye = new THREE.Vector3(player.state.position.x, player.state.position.y + player.state.eye, player.state.position.z);
+  const target = new THREE.Vector3(bot.pos.x, bot.pos.y + 1.25, bot.pos.z);
+  const d = target.clone().sub(eye);
+  const len = d.length() || 1;
+  player.state.yaw = Math.atan2(-d.x, -d.z);
+  player.state.pitch = Math.asin(Math.max(-1, Math.min(1, d.y / len)));
+  syncCamera();
+  weaponView.state.cooldown = 0;
+  tryShoot();
+}
+
+function fireAtNearestAshen() {
+  fireAtBot(nearestAshenBot());
+}
+
+// The nearest Ashen bot the player can actually see — the ray must reach the
+// bot itself, not a wall. A burst at a bot behind the mid wall would only
+// chip paint off the wall.
+function visibleAshenBot() {
+  const eye = new THREE.Vector3(player.state.position.x, player.state.position.y + player.state.eye, player.state.position.z);
+  let best = null;
+  let bestD = Infinity;
+  for (const b of bots.list) {
+    if (b.team !== 'ashen' || !b.alive) continue;
+    const target = new THREE.Vector3(b.pos.x, b.pos.y + 1.25, b.pos.z);
+    const d = target.clone().sub(eye);
+    const dist = d.length();
+    const hit = raycast(eye, d.normalize(), dist);
+    if (hit && hit.object.userData.bot === b && dist < bestD) { bestD = dist; best = b; }
+  }
+  return best;
+}
+
+// --- minimap ---
+function updateMinimap() {
+  const ember = [];
+  for (const b of bots.list) if (b.team === 'ember' && b.alive) ember.push({ x: b.pos.x, z: b.pos.z });
+  for (const b of bots.list) {
+    if (b.team !== 'ashen' || !b.alive) continue;
+    const spotted = bots.list.some((e) => e.team === 'ember' && e.alive && e.target && e.target.bot === b);
+    if (spotted) seenAshen.set(b.id, { x: b.pos.x, z: b.pos.z, at: time });
+  }
+  const ashen = [];
+  for (const [id, s] of seenAshen) {
+    if (time - s.at > 4) { seenAshen.delete(id); continue; }
+    ashen.push({ x: s.x, z: s.z, age: time - s.at });
+  }
+  const bombPos = bomb.state.state === 'planted' || bomb.state.state === 'dropped'
+    ? { x: bomb.state.pos.x, z: bomb.state.pos.z, planted: bomb.state.state === 'planted' }
+    : null;
+  hud.setMinimap({
+    player: { x: player.state.position.x, z: player.state.position.z, yaw: player.state.yaw },
+    ember,
+    ashen,
+    bomb: bombPos,
+  });
 }
 
 // --- rounds ---
@@ -301,6 +430,9 @@ function startRound(n) {
   bots.spawnRound(n, seedBase + n * 101 + 7);
   bomb.reset();
   fx.clear();
+  grenades.reset();
+  hud.setGrenades(grenades.counts());
+  hud.setPlan(bots.getPlan('ember'));
   hud.setScore(match.ember, match.ashen, match.round);
   hud.setMoney(match.money);
   hud.setAlive(5, 5);
@@ -309,8 +441,8 @@ function startRound(n) {
   hud.setSpectate(null);
   hud.hideBanner();
   updateScoreboard();
-  hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0);
-  hud.banner(`ROUND ${n}`, n === 1 ? 'Plant the Spark or eliminate the Ashen team' : 'First to 5 rounds takes the yard', 2200);
+  hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop());
+  hud.banner(`ROUND ${n}`, n === 1 ? 'Plan: split A — you entry A. Plant the Spark or eliminate the Ashen team' : 'First to 5 rounds takes the yard', 2200);
 }
 
 function startMatch() {
@@ -334,6 +466,7 @@ const ctx = {
   get playerPos() { return player.state.position; },
   get playerAlive() { return player.state.alive; },
   bomb: bomb.state,
+  bots: bots.list,
   rng,
   raycast: (o, d, m, ex) => raycast(o, d, m, ex),
   damageBot: (bot, amount, part, name) => damageBot(bot, amount, part, name),
@@ -342,6 +475,27 @@ const ctx = {
   impact: (p) => fx.impact(p),
   sound: (kind, arg) => sound(kind, arg),
   nearPlayer: (pos) => pos.distanceTo(player.state.position) < 30,
+  // Hearing: a shot, an explosion or a flash pop reaches every bot in radius.
+  noise: (pos, kind, radius, shooter) => bots.hearNoise(ctx, pos, kind, radius, shooter),
+  // Radio: bots report what they hear and see; the log is the HUD's left column.
+  radio: (text, team) => hud.radio(text, team),
+  // Smoke clouds block bot sight (never bullets).
+  smokeBlocks: (a, b) => fx.smokeBlocks(a, b),
+  // The team's one smoke per round, thrown by the lead Ember bot on the push.
+  throwGrenade: (type, origin, dir) => grenades.throwBotSmoke(origin, dir),
+  // A flash pop blinds bots facing it, and the player if they face it too.
+  blind: (pos) => {
+    bots.blind(ctx, pos);
+    if (player.state.alive && phase === 'live') {
+      const toFlash = pos.clone().sub(camera.position);
+      const dist = toFlash.length();
+      if (dist < 25) {
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        if (toFlash.normalize().dot(fwd) > 0.2) hud.flash();
+      }
+    }
+  },
   onPlanted: (site, bot) => {
     bomb.plant(site, bot.pos);
     hud.banner('SPARK PLANTED', `${bot.name} planted at Site ${site} — detonation in 35s`, 3000);
@@ -381,7 +535,18 @@ hud.onBuy((id) => {
       player.state.armor = ARMOR_VALUE;
       sound('buy');
       hud.setMoney(match.money);
-      hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0);
+      hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop());
+    }
+    return;
+  }
+  if (id === 'frag' || id === 'smoke' || id === 'flash') {
+    const g = GRENADES[id];
+    if (match.money >= g.price && grenades.buy(id)) {
+      match.money -= g.price;
+      sound('buy');
+      hud.setMoney(match.money);
+      hud.setGrenades(grenades.counts());
+      hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop());
     }
     return;
   }
@@ -391,7 +556,7 @@ hud.onBuy((id) => {
   owned.add(id);
   switchWeapon(id);
   hud.setMoney(match.money);
-  hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0);
+  hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop());
 });
 
 renderer.domElement.addEventListener('click', () => {
@@ -467,6 +632,9 @@ function fixedStep(dt) {
       for (let i = 0; i < WEAPON_ORDER.length; i += 1) {
         if (pressed(`Digit${i + 1}`)) switchWeapon(WEAPON_ORDER[i]);
       }
+      if (pressed('Digit4')) throwPlayerGrenade('frag');
+      if (pressed('Digit5')) throwPlayerGrenade('smoke');
+      if (pressed('Digit6')) throwPlayerGrenade('flash');
 
       // plant channel
       if (bomb.state.state === 'carried' && bomb.state.carrier === 'player') {
@@ -502,7 +670,7 @@ function fixedStep(dt) {
 
     if (pressed('KeyB') && phase === 'freeze') {
       const menu = document.getElementById('buy-menu');
-      if (menu.hidden) hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0);
+      if (menu.hidden) hud.showBuy(Object.values(WEAPONS), match.money, weaponView.state.id, player.state.armor > 0, grenadeShop());
       else hud.hideBuy();
     }
     if (pressed('Tab')) {
@@ -516,8 +684,11 @@ function fixedStep(dt) {
     }
 
     bots.step(dt, ctx);
+    grenades.step(dt, ctx);
     weaponView.step(dt);
     fx.step(dt);
+    mmTick += 1;
+    if (mmTick % 9 === 0) updateMinimap();
     prevKeys = new Set(keys);
   }
 
@@ -529,6 +700,7 @@ function fixedStep(dt) {
   hud.setHealth(player.state.health, player.state.armor);
   hud.setAmmo(weaponView.state.mag, weaponView.state.reserve, weaponView.state.def.name.toUpperCase());
   hud.setMoney(match.money);
+  hud.setGrenades(grenades.counts());
   if (phase === 'freeze') hud.setTimer(freezeTimer, 'freeze');
   else if (bomb.state.state === 'planted') hud.setTimer(bomb.state.detonateIn, 'live');
   else hud.setTimer(roundTimer, 'live');
@@ -592,24 +764,66 @@ function setupShot() {
     owned.add('vk47');
     switchWeapon('vk47');
     player.state.armor = 50;
-    player.reset(new THREE.Vector3(-5, 0, 4), -0.4);
+    // West lane, tight to the west wall, looking north up the lane to Site A:
+    // the big FOUNDRY sign and the furnace dead ahead, the defenders holding
+    // the site 13 m up the lane in the open — no mid wall between us and
+    // them, so the burst can see them from the start. (Standing further east
+    // puts the teal container right beside the camera and it fills the frame;
+    // tight to the wall it falls out of frame to the right.)
+    player.reset(new THREE.Vector3(-17, 0, 4), 0.0);
     phase = 'live';
     roundTimer = ROUND_TIME;
     bots.spawnRound(1, seedBase + 108);
     bomb.reset();
+    grenades.reset();
+    grenades.buy('frag'); // the cover carries all three grenades: 1 frag, 1 smoke, 1 flash
+    hud.setGrenades(grenades.counts());
+    hud.setPlan(bots.getPlan('ember'));
     hud.hideOverlay();
     hud.hideBuy();
     updateScoreboard();
-    // The sim runs 420 fixed steps synchronously, with no render in between — so
-    // the meshes' matrixWorld would go stale and every raycast would test the bots
-    // at their spawn (or origin) instead of where they walked to. Sync the graph
-    // before each step, the way the renderer does once per frame in live play.
+    // Seed the radio log the way the live hearing system writes it: the plan
+    // goes out first, then the callouts as the fight develops.
+    hud.radio('Vex: Smoking Short A — push through it', 'ember');
     scene.updateMatrixWorld(true);
-    for (let i = 0; i < 420; i += 1) {
+    let coverTarget = null;
+    let burstLeft = 0;
+    let burstDone = false;
+    for (let i = 0; i < 400; i += 1) {
+      // Scripted cover action, all real simulation. A flash mid-fight (it
+      // blinds the defenders facing us), then ONE three-shot burst at the
+      // first visible defender — three VK-47 hits kill, so the killfeed shows
+      // a real kill. The smoke goes out late, down the lane, so it is fresh
+      // and thick in the frame while the burst already did its work.
+      if (i === 150) throwPlayerGrenade('flash');
+      if (i === 300) {
+        // Aim up the lane for the smoke so it blooms in the middle of the
+        // frame, not against the west wall.
+        player.state.yaw = 0.3;
+        camera.rotation.y = 0.3;
+        throwPlayerGrenade('smoke');
+      }
+      if (i === 310) {
+        player.state.yaw = 0.0;
+        camera.rotation.y = 0.0;
+      }
+      if (!burstDone && burstLeft === 0 && i >= 180 && i % 5 === 0) {
+        const vis = visibleAshenBot();
+        if (vis) { coverTarget = vis; burstLeft = 3; }
+      }
+      if (burstLeft > 0 && i % 7 === 0) {
+        if (coverTarget && coverTarget.alive) { fireAtBot(coverTarget); burstLeft -= 1; }
+        else burstLeft = 0;
+        if (burstLeft === 0) burstDone = true;
+      }
       fixedStep(STEP);
       scene.updateMatrixWorld(true);
       if (phase !== 'live') break;
     }
+    // The last real shot fires in the final frame callback, not here: the
+    // muzzle flash only lives 0.2 s and the driver captures ~50 ms after
+    // __shotReady, so a shot fired here would have faded before the capture.
+    finalShotPending = true;
   } else if (shotMode === 'end') {
     match.ember = 5;
     match.ashen = 3;
@@ -623,6 +837,17 @@ function setupShot() {
   requestAnimationFrame(() => {
     render();
     requestAnimationFrame(() => {
+      // The cover's last shot fires here, in the frame just before the
+      // capture: the muzzle flash and tracer only live ~0.2 s, and the driver
+      // captures ~50 ms after __shotReady, so they are still burning.
+      if (finalShotPending) {
+        finalShotPending = false;
+        fireAtBot(visibleAshenBot() || nearestAshenBot());
+        // Hold the star for the capture: the driver needs 100-250 ms to poll
+        // and capture, longer than the flash lives, so without this the star
+        // has already faded by the time the frame is taken.
+        weaponView.state.flash = 5;
+      }
       render();
       window.__shotReady = true;
     });

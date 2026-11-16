@@ -58,6 +58,33 @@
     transform: translateY(-.5px);
   }
 
+  /* minimap + radio log (winner pattern: minimap top-left, radio under it) */
+  #minimap-wrap { position: absolute; top: 14px; left: 16px; z-index: 7; pointer-events: none; }
+  #minimap { border: 1px solid var(--line); border-radius: 6px; display: block; }
+  #minimap-label { font-size: 10px; letter-spacing: 2px; color: var(--muted); margin-top: 3px; text-align: center; }
+  #radio-log {
+    position: absolute; top: 156px; left: 16px; z-index: 7; font-size: 12px; line-height: 1.5;
+    pointer-events: none; max-width: 320px;
+  }
+  .radio-row {
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: 2px 8px; margin-bottom: 4px; text-shadow: 0 1px 2px #000;
+  }
+  .radio-row.radio-ashen { border-left-color: var(--teal); }
+  #plan-line {
+    position: absolute; top: 114px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 2px; color: var(--ink); z-index: 7; pointer-events: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px;
+    white-space: nowrap;
+  }
+  #grenades-line { font-size: 12px; letter-spacing: 1px; color: var(--ink); margin-top: 3px; }
+  #flash-overlay {
+    position: absolute; inset: 0; pointer-events: none; z-index: 9; opacity: 0;
+    background: #fff; transition: opacity 0.5s ease-out;
+  }
+  .grenade-card { border-color: rgba(255, 140, 46, 0.45); }
+  .g-key { color: var(--accent); }
+
   /* top bar */
   #topbar {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
@@ -208,6 +235,11 @@
 
   <div id="killfeed"></div>
 
+  <div id="minimap-wrap"><canvas id="minimap" width="150" height="118"></canvas><div id="minimap-label">YARD 7 — LIVE MAP</div></div>
+  <div id="radio-log"></div>
+  <div id="plan-line">PLAN: SPLIT A — YOU: ENTRY A</div>
+  <div id="flash-overlay"></div>
+
   <div id="health-box">
     <span id="health-num">100</span><span id="armor-num"></span>
     <div id="health-bar"><div id="health-fill"></div></div>
@@ -218,12 +250,14 @@
     <div id="weapon-name">P9 SIDEARM</div>
     <div id="ammo"><span id="ammo-mag">15</span> <span id="ammo-reserve">/ 60</span></div>
     <div id="money-value">$800</div>
+    <div id="grenades-line">4 FRAG 0 · SMOKE 1 · FLASH 0</div>
   </div>
 
   <div id="keys">
     <b>WASD</b> move &nbsp; <b>Mouse</b> aim &nbsp; <b>Shift</b> walk<br>
     <b>Space</b> jump &nbsp; <b>Ctrl</b> crouch &nbsp; <b>R</b> reload<br>
-    <b>E</b> plant &nbsp; <b>B</b> buy &nbsp; <b>1–5</b> weapons &nbsp; <b>Tab</b> score
+    <b>E</b> plant &nbsp; <b>B</b> buy &nbsp; <b>1–5</b> weapons &nbsp; <b>Tab</b> score<br>
+    <b>4</b> frag &nbsp; <b>5</b> smoke &nbsp; <b>6</b> flash
   </div>
 
   <div id="banner" hidden><div id="banner-title"></div><div id="banner-sub"></div></div>
@@ -249,7 +283,7 @@
 
   <div id="overlay">
     <div id="overlay-title">EMBERLINE</div>
-    <div id="overlay-copy">Round-based tactical FPS. Plant the Spark at Foundry or Silos, or eliminate the Ashen team. First to 5 rounds takes the yard.</div>
+    <div id="overlay-copy">Round-based tactical FPS. Plant the Spark at Foundry or Silos, or eliminate the Ashen team. Bots hear gunfire, call it on the radio and play a team plan. Throw smoke and flash with 5 and 6, frag with 4. First to 5 rounds takes the yard.</div>
     <button id="play" type="button">Click to play</button>
     <div id="overlay-keys">
       <b>WASD</b> move &nbsp; <b>Mouse</b> aim &nbsp; <b>Left click</b> fire &nbsp; <b>R</b> reload<br>

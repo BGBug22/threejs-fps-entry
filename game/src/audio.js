@@ -113,6 +113,15 @@ export function createAudio() {
       tone({ frequency: 880, duration: 0.05, type: 'sine', gain: 0.18 });
       tone({ frequency: 1174, duration: 0.07, type: 'sine', gain: 0.18, delay: 0.05 });
     },
+    throw() { burst({ duration: 0.18, frequency: 2400, gain: 0.25, slideTo: 500 }); },
+    smoke() {
+      burst({ duration: 0.7, frequency: 900, gain: 0.35, slideTo: 200 });
+      tone({ frequency: 320, duration: 0.2, type: 'sine', gain: 0.12, slideTo: 140 });
+    },
+    flash() {
+      burst({ duration: 0.1, frequency: 3200, gain: 0.7, slideTo: 800 });
+      tone({ frequency: 2400, duration: 0.35, type: 'sine', gain: 0.14, slideTo: 1800 });
+    },
     click() { tone({ frequency: 700, duration: 0.03, type: 'square', gain: 0.1 }); },
   };
 }

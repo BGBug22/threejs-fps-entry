@@ -40,14 +40,38 @@ export function createWorld(scene) {
       metalness: name === 'accent' || name === 'teal' ? 0.25 : 0.04,
     });
   }
-  const rustMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a4a22'), roughness: 0.85, metalness: 0.35 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#2b211a'), roughness: 0.95, metalness: 0.05 });
+  const rustMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#a85a28'), roughness: 0.8, metalness: 0.35 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#4a3826'), roughness: 0.95, metalness: 0.05 });
+  const floorMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a6a45'), roughness: 0.95, metalness: 0.02 });
   const glowMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color('#ff7a1a'), emissive: new THREE.Color('#ff6a00'), emissiveIntensity: 2.2, roughness: 0.6,
   });
 
+  // Big readable site signs: a canvas texture with one giant letter plus the site
+  // name, so the map's identity reads in a single glance (and in a thumbnail).
+  // MeshBasicMaterial stays bright under any light, like a painted sign.
+  function signTexture(big, small, bg, fg) {
+    const c = document.createElement('canvas');
+    c.width = 1024;
+    c.height = 256;
+    const g = c.getContext('2d');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, 1024, 256);
+    g.fillStyle = fg;
+    g.font = '900 190px "Segoe UI", system-ui, sans-serif';
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.fillText(big, 36, 138);
+    g.font = '800 54px "Segoe UI", system-ui, sans-serif';
+    g.fillText(small, 300, 140);
+    const texture = new THREE.CanvasTexture(c);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
   const colliders = [];
   const shootables = [];
+  const minimapRects = [];
 
   function box(w, h, d, x, y, z, mat, collide = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -55,6 +79,7 @@ export function createWorld(scene) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     group.add(mesh);
+    if (h >= 1) minimapRects.push({ x, z, w, d });
     if (collide) {
       colliders.push(new THREE.Box3().setFromObject(mesh));
       shootables.push(mesh);
@@ -68,13 +93,14 @@ export function createWorld(scene) {
     mesh.receiveShadow = true;
     group.add(mesh);
     const half = Math.max(rTop, rBottom);
+    minimapRects.push({ x, z, w: half * 2, d: half * 2 });
     colliders.push(new THREE.Box3(new THREE.Vector3(x - half, y - h / 2, z - half), new THREE.Vector3(x + half, y + h / 2, z + half)));
     shootables.push(mesh);
     return mesh;
   }
 
   // Floor and outer walls (open sky so the low sun reaches the yard).
-  box(36.4, 0.4, 28.4, 0, -0.2, 0, darkMat);
+  box(36.4, 0.4, 28.4, 0, -0.2, 0, floorMat);
   box(0.4, 5, 28.4, -18.2, 2.5, 0, mats.surface);
   box(0.4, 5, 28.4, 18.2, 2.5, 0, mats.surface);
   box(36.4, 5, 0.4, 0, 2.5, -14.2, mats.surface);
@@ -120,19 +146,35 @@ export function createWorld(scene) {
   box(1.4, 3.4, 1.4, 0, 1.7, 0.5, mats.hairline);
 
   // Site markers: painted floor plates so each site reads at a glance.
-  const plateA = new THREE.Mesh(new THREE.CircleGeometry(4.5, 28), new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.accent), transparent: true, opacity: 0.16 }));
+  const plateA = new THREE.Mesh(new THREE.CircleGeometry(4.5, 28), new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.accent), transparent: true, opacity: 0.22 }));
   plateA.rotation.x = -Math.PI / 2;
   plateA.position.set(-12, 0.02, -9);
   group.add(plateA);
-  const plateB = new THREE.Mesh(new THREE.CircleGeometry(4.5, 28), new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.teal), transparent: true, opacity: 0.16 }));
+  const plateB = new THREE.Mesh(new THREE.CircleGeometry(4.5, 28), new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.teal), transparent: true, opacity: 0.22 }));
   plateB.rotation.x = -Math.PI / 2;
   plateB.position.set(12, 0.02, -9);
   group.add(plateB);
 
-  // Light: a low warm sun from the west, a cool dusk fill, and a sky gradient.
-  const sky = new THREE.HemisphereLight(new THREE.Color('#5a6b8a'), new THREE.Color('#2a1c12'), 1.25);
+  // Giant site signs on the north wall, one per site, plus the yard's own name
+  // on the mid wall facing the attackers' spawn — the map's identity in one look.
+  function addSign(texture, w, h, x, y, z, ry = 0) {
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ map: texture }),
+    );
+    sign.position.set(x, y, z);
+    sign.rotation.y = ry;
+    group.add(sign);
+    return sign;
+  }
+  addSign(signTexture('A', 'FOUNDRY · SITE A', '#1d130b', '#ffb45e'), 9, 2.25, -12, 3.6, -13.9);
+  addSign(signTexture('B', 'SILOS · SITE B', '#0b1d20', '#7de3f0'), 9, 2.25, 12, 3.6, -13.9);
+  addSign(signTexture('7', 'YARD 7 — EMBERLINE WORKS', '#3a1e08', '#ffe9c4'), 6, 1.5, 0, 3.5, -1.68);
+
+  // Light: a high warm sunset sun, a bright sky fill, and a sky gradient.
+  const sky = new THREE.HemisphereLight(new THREE.Color('#ffd9a0'), new THREE.Color('#7a5230'), 1.7);
   scene.add(sky);
-  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb45e'), 3.0);
+  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb45e'), 4.2);
   sun.position.set(-22, 12, 10);
   sun.target.position.set(4, 0, -6);
   sun.castShadow = true;
@@ -144,7 +186,7 @@ export function createWorld(scene) {
   sun.shadow.camera.far = 70;
   sun.shadow.bias = -0.0006;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight(new THREE.Color('#4a6a8a'), 0.7);
+  const fill = new THREE.DirectionalLight(new THREE.Color('#9ab4cc'), 1.0);
   fill.position.set(10, 12, -12);
   scene.add(fill);
   const furnaceLight = new THREE.PointLight(new THREE.Color('#ff6a00'), 22, 14, 1.8);
@@ -161,6 +203,7 @@ export function createWorld(scene) {
     shootables,
     group,
     waypoints,
+    minimapRects,
     sites: {
       A: { center: new THREE.Vector3(-12, 0, -9), radius: 4.5, name: 'Foundry' },
       B: { center: new THREE.Vector3(12, 0, -9), radius: 4.5, name: 'Silos' },

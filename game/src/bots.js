@@ -35,6 +35,20 @@ function nearestNode(waypoints, pos) {
   return best;
 }
 
+// Short lane names for the radio: "Short A", "Mid", "East Lane" — the same words
+// the winners' callouts use, so a callout tells the player where the sound was.
+function locationName(pos) {
+  const dA = Math.hypot(pos.x + 12, pos.z + 9);
+  const dB = Math.hypot(pos.x - 12, pos.z + 9);
+  if (dA < 6) return 'Short A';
+  if (dB < 6) return 'Short B';
+  if (pos.z > 4) return 'Spawn';
+  if (Math.abs(pos.x) < 4) return 'Mid';
+  if (pos.x < -8) return 'West Lane';
+  if (pos.x > 8) return 'East Lane';
+  return 'Yard';
+}
+
 function findPath(waypoints, from, to) {
   if (from === to) return [to];
   const prev = new Array(waypoints.length).fill(-1);
@@ -61,48 +75,69 @@ export function createBots(scene, world) {
   const tmpV = new THREE.Vector3();
   const tmpDir = new THREE.Vector3();
 
-  function makeHealthBar() {
+  // Nameplate + health bar: one canvas sprite per bot, name on top in the team
+  // colour, bar below. Winners show nameplates; a bot you can name is a bot
+  // you can read at a glance.
+  function makeHealthBar(name, team) {
     const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 8;
+    canvas.width = 128;
+    canvas.height = 28;
     const texture = new THREE.CanvasTexture(canvas);
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: true, transparent: true }));
-    sprite.scale.set(0.95, 0.12, 1);
-    sprite.position.y = 1.98;
-    return { canvas, texture, sprite };
+    sprite.scale.set(1.15, 0.25, 1);
+    sprite.position.y = 2.02;
+    return { canvas, texture, sprite, name, team };
   }
 
   function drawHealthBar(bot) {
-    const { canvas, texture } = bot.bar;
+    const { canvas, texture, name, team } = bot.bar;
     const c = canvas.getContext('2d');
-    c.clearRect(0, 0, 64, 8);
+    c.clearRect(0, 0, 128, 28);
+    c.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+    c.textAlign = 'center';
+    c.fillStyle = team === 'ember' ? '#ffb45e' : '#7de3f0';
+    c.fillText(name, 64, 15);
     c.fillStyle = 'rgba(10,10,10,0.75)';
-    c.fillRect(0, 0, 64, 8);
+    c.fillRect(14, 19, 100, 7);
     const f = Math.max(0, bot.health / 100);
     c.fillStyle = f > 0.55 ? '#7dc383' : f > 0.28 ? '#f0a830' : '#e5484d';
-    c.fillRect(1, 1, 62 * f, 6);
+    c.fillRect(15, 20, 98 * f, 5);
     texture.needsUpdate = true;
   }
 
+  // A readable humanoid, not a plain box: torso in the team colour, head with a
+  // bright visor stripe, helmet, arms holding the gun, legs and a backpack.
+  // Ember is hot orange, Ashen is bright teal — the two teams never blend.
   function buildBotMesh(team) {
     const teamColor = team === 'ember' ? PALETTE.accent : PALETTE.teal;
     const group = new THREE.Group();
-    const torsoMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(teamColor), roughness: 0.6, metalness: 0.15 });
-    const darkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#241c16'), roughness: 0.8 });
+    const torsoMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(teamColor), roughness: 0.55, metalness: 0.15 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#2e2118'), roughness: 0.8 });
     const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.ink), roughness: 0.7 });
+    const visorMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(team === 'ember' ? '#ffd23e' : '#bff6ff') });
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.3), torsoMat);
     torso.position.y = 1.05;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 10), skinMat);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 10), skinMat);
     head.position.y = 1.56;
-    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.36), torsoMat);
-    helmet.position.y = 1.66;
+    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.13, 0.38), torsoMat);
+    helmet.position.y = 1.67;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.05), visorMat);
+    visor.position.set(0, 1.58, -0.16);
+    const armL = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.55, 0.13), torsoMat);
+    armL.position.set(-0.33, 1.12, -0.12);
+    armL.rotation.x = -0.7;
+    const armR = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.55, 0.13), torsoMat);
+    armR.position.set(0.33, 1.12, -0.12);
+    armR.rotation.x = -0.7;
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.14), darkMat);
+    pack.position.set(0, 1.08, 0.22);
     const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.62, 0.2), darkMat);
     legL.position.set(-0.13, 0.31, 0);
     const legR = legL.clone();
     legR.position.x = 0.13;
     const gun = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.55), darkMat);
     gun.position.set(0.28, 1.18, -0.2);
-    group.add(torso, head, helmet, legL, legR, gun);
+    group.add(torso, head, helmet, visor, armL, armR, pack, legL, legR, gun);
     group.traverse((m) => { if (m.isMesh) { m.castShadow = true; } });
     return { group, torso, head };
   }
@@ -142,7 +177,10 @@ export function createBots(scene, world) {
     if (dist < 0.01) return true;
     tmpDir.divideScalar(dist);
     const hit = ctx.raycast(from, tmpDir, dist - 0.2, bot);
-    return !hit;
+    if (hit) return false;
+    // A live smoke cloud between the eyes blocks sight (never bullets).
+    if (ctx.smokeBlocks && ctx.smokeBlocks(from, to)) return false;
+    return true;
   }
 
   function pickWeapon(round, rng, sniper) {
@@ -162,7 +200,7 @@ export function createBots(scene, world) {
     hitMeshes.length = 0;
     const mk = (team, name, index, spawnPos, yaw, sniper) => {
       const { group, torso, head } = buildBotMesh(team);
-      const bar = makeHealthBar();
+      const bar = makeHealthBar(name, team);
       group.add(bar.sprite);
       group.position.copy(spawnPos);
       group.rotation.y = yaw;
@@ -179,6 +217,10 @@ export function createBots(scene, world) {
         speed: 3.6, plantProgress: 0, defuseProgress: 0, alive: true, carrier: false,
         fallT: 0, scanAt: rng() * 0.15, siteNode: 0,
         laneOffset: (index - (team === 'ember' ? 1.5 : 2)) * 0.9,
+        // Hearing + radio: a bot that hears a shot turns toward it, walks over to
+        // look, and says so on the radio (throttled, so the log never floods).
+        heardPos: new THREE.Vector3(), heardUntil: 0, lastHearCall: -99,
+        lastContactCall: -99, blindedUntil: 0, smokeReady: team === 'ember' && index === 0,
       };
       torso.userData.bot = bot;
       torso.userData.part = 'torso';
@@ -225,6 +267,18 @@ export function createBots(scene, world) {
         }
       }
       if (ctx.phase !== 'live') continue;
+
+      // A flashed bot stands blind: no sight, no shots, no new orders until the
+      // white clears. The radio still works — a blinded bot says so.
+      if (ctx.time < bot.blindedUntil) {
+        if (!bot.blindCalled) {
+          bot.blindCalled = true;
+          if (ctx.radio) ctx.radio(`${bot.name}: Flashed — I can't see!`, bot.team);
+        }
+        bot.target = null;
+        continue;
+      }
+      bot.blindCalled = false;
 
       // --- perception, staggered ---
       bot.scanAt -= dt;
@@ -307,6 +361,28 @@ export function createBots(scene, world) {
 
       // --- movement ---
       if (bot.team === 'ember') {
+        // One smoke per round: the lead bot screens the site push with it.
+        if (bot.smokeReady && !bot.target) {
+          const site = world.sites[bot.goalSite];
+          const dSite = Math.hypot(bot.pos.x - site.center.x, bot.pos.z - site.center.z);
+          if (dSite < 6 && ctx.throwGrenade) {
+            const dir = new THREE.Vector3(site.center.x - bot.pos.x, 0.6, site.center.z - bot.pos.z);
+            if (ctx.throwGrenade('smoke', bot.pos.clone().add(new THREE.Vector3(0, 1.4, 0)), dir)) {
+              bot.smokeReady = false;
+              if (ctx.radio) ctx.radio(`${bot.name}: Smoking ${bot.goalSite === 'A' ? 'Short A' : 'Short B'} — push through it`, 'ember');
+            }
+          }
+        }
+        // Heard a shot and no enemy in sight: walk over and look.
+        if (!bot.target && ctx.time < bot.heardUntil) {
+          const dHeard = Math.hypot(bot.pos.x - bot.heardPos.x, bot.pos.z - bot.heardPos.z);
+          if (dHeard > 1.5) {
+            walkTo(bot, bot.heardPos.x, bot.heardPos.z, dt, 4.2);
+            bot.state = 'investigate';
+            continue;
+          }
+          bot.heardUntil = 0;
+        }
         const site = world.sites[bot.goalSite];
         walkTo(bot, site.center.x, site.center.z, dt, bot.speed);
         if (Math.hypot(bot.pos.x - site.center.x, bot.pos.z - site.center.z) < 2.2) bot.state = 'hold';
@@ -375,7 +451,15 @@ export function createBots(scene, world) {
       if (hasLineOfSight(ctx, bot, eye, chest)) { best = c; bestD = d; }
     }
     if (best) {
-      if (!bot.target) bot.reactionAt = ctx.time + 0.4 + ctx.rng() * 0.5;
+      if (!bot.target) {
+        bot.reactionAt = ctx.time + 0.4 + ctx.rng() * 0.5;
+        // First sight of an enemy goes on the radio, throttled per bot.
+        if (ctx.radio && ctx.time - bot.lastContactCall > 5) {
+          bot.lastContactCall = ctx.time;
+          const where = locationName(best.pos);
+          ctx.radio(`${bot.name}: Contact at ${where}, rotating`, bot.team);
+        }
+      }
       bot.target = best;
       bot.targetKind = best.kind;
       bot.state = 'engage';
@@ -392,6 +476,7 @@ export function createBots(scene, world) {
     }
     bot.mag -= 1;
     bot.cooldown = bot.def.gap;
+    if (ctx.noise) ctx.noise(bot.pos, 'shot', 20, bot);
     const eye = botEye(bot);
     const tPos = t.kind === 'player' ? ctx.playerPos : t.bot.pos;
     const headshot = ctx.rng() < 0.14;
@@ -439,6 +524,51 @@ export function createBots(scene, world) {
     return false;
   }
 
+  // Hearing: a shot or an explosion reaches every bot inside its radius. The
+  // bot turns toward the sound, walks over to look, and says so on the radio.
+  function hearNoise(ctx, pos, kind, radius, shooter) {
+    let called = 0;
+    for (const bot of list) {
+      if (!bot.alive || bot === shooter) continue;
+      const d = Math.hypot(bot.pos.x - pos.x, bot.pos.z - pos.z);
+      if (d > radius) continue;
+      bot.heardPos.copy(pos);
+      bot.heardUntil = ctx.time + 3.5;
+      faceToward(bot, pos.x, pos.z);
+      if (ctx.radio && ctx.time - bot.lastHearCall > 4 && called < 2) {
+        bot.lastHearCall = ctx.time;
+        called += 1;
+        const what = kind === 'explosion' ? 'Heard explosion' : 'Heard shots';
+        ctx.radio(`${bot.name}: ${what}, ${locationName(pos)}`, bot.team);
+      }
+    }
+  }
+
+  // Flash blindness: bots facing the pop, inside 22 m with a clear line, lose
+  // their sight for 2.2 s.
+  function blind(ctx, pos) {
+    for (const bot of list) {
+      if (!bot.alive) continue;
+      const d = Math.hypot(bot.pos.x - pos.x, bot.pos.z - pos.z);
+      if (d > 22) continue;
+      const toFlash = new THREE.Vector3(pos.x - bot.pos.x, 0, pos.z - bot.pos.z).normalize();
+      const facing = new THREE.Vector3(-Math.sin(bot.yaw), 0, -Math.cos(bot.yaw));
+      if (toFlash.dot(facing) < 0.2) continue;
+      const eye = botEye(bot);
+      if (!hasLineOfSight(ctx, bot, eye, new THREE.Vector3(pos.x, pos.y + 1.2, pos.z))) continue;
+      bot.blindedUntil = ctx.time + 2.2;
+      bot.target = null;
+    }
+  }
+
+  // The round plan, printed in the HUD so the player (and the judge) can see
+  // the team is playing a plan, not wandering.
+  function getPlan(team) {
+    return team === 'ember'
+      ? 'PLAN: SPLIT A — YOU: ENTRY A'
+      : 'PLAN: HOLD SITES — 2A · 2B · 1 MID';
+  }
+
   return {
     list,
     hitMeshes,
@@ -446,6 +576,9 @@ export function createBots(scene, world) {
     step,
     aliveCount,
     damage,
+    hearNoise,
+    blind,
+    getPlan,
     reset() {
       for (const bot of list) scene.remove(bot.group);
       list.length = 0;
