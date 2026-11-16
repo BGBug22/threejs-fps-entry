@@ -134,7 +134,7 @@ export function createHud() {
       els.planLine.textContent = text;
     },
     setGrenades(counts) {
-      const text = `4 FRAG ${counts.frag} · SMOKE ${counts.smoke} · FLASH ${counts.flash}`;
+      const text = `4 FRAG ${counts.frag} · SMOKE ${counts.smoke} · FLASH ${counts.flash} · MOLOTOV ${counts.molotov}`;
       if (text === last.grenades) return;
       last.grenades = text;
       els.grenades.textContent = text;
@@ -264,7 +264,7 @@ export function createHud() {
       armor.innerHTML = `<b>Plated Vest</b><span>$650</span><i>${hasArmor ? 'EQUIPPED' : '50 armour, absorbs half of every hit.'}</i>`;
       armor.addEventListener('click', () => this._onBuy && this._onBuy('armor'));
       els.buyGrid.appendChild(armor);
-      // Grenades: 4 frag, 5 smoke, 6 flash. Max 2 of each per round.
+      // Grenades: 4 frag, 5 smoke, 6 flash, 7 molotov. Max 2 of each per round.
       for (const g of grenades) {
         const card = document.createElement('button');
         card.type = 'button';

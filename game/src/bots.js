@@ -221,6 +221,9 @@ export function createBots(scene, world) {
         // look, and says so on the radio (throttled, so the log never floods).
         heardPos: new THREE.Vector3(), heardUntil: 0, lastHearCall: -99,
         lastContactCall: -99, blindedUntil: 0, smokeReady: team === 'ember' && index === 0,
+        // One Molotov per round: Rook, the Site A defender, denies the push
+        // with fire when the attackers close in on his site.
+        molotovReady: team === 'ashen' && index === 0,
       };
       torso.userData.bot = bot;
       torso.userData.part = 'torso';
@@ -367,7 +370,7 @@ export function createBots(scene, world) {
           const dSite = Math.hypot(bot.pos.x - site.center.x, bot.pos.z - site.center.z);
           if (dSite < 6 && ctx.throwGrenade) {
             const dir = new THREE.Vector3(site.center.x - bot.pos.x, 0.6, site.center.z - bot.pos.z);
-            if (ctx.throwGrenade('smoke', bot.pos.clone().add(new THREE.Vector3(0, 1.4, 0)), dir)) {
+            if (ctx.throwGrenade('smoke', bot.pos.clone().add(new THREE.Vector3(0, 1.4, 0)), dir, bot.name)) {
               bot.smokeReady = false;
               if (ctx.radio) ctx.radio(`${bot.name}: Smoking ${bot.goalSite === 'A' ? 'Short A' : 'Short B'} — push through it`, 'ember');
             }
@@ -388,6 +391,26 @@ export function createBots(scene, world) {
         if (Math.hypot(bot.pos.x - site.center.x, bot.pos.z - site.center.z) < 2.2) bot.state = 'hold';
         else bot.state = 'push';
       } else {
+        // One Molotov per round: Rook denies the site push with fire when an
+        // attacker closes in on his site.
+        if (bot.molotovReady && !bot.target) {
+          const site = world.sites[bot.goalSite];
+          let nearest = null;
+          let nearestD = 11;
+          for (const e of list) {
+            if (e.team !== 'ember' || !e.alive) continue;
+            const d = Math.hypot(e.pos.x - site.center.x, e.pos.z - site.center.z);
+            if (d < nearestD) { nearestD = d; nearest = e; }
+          }
+          if (nearest && ctx.throwGrenade) {
+            const origin = bot.pos.clone().add(new THREE.Vector3(0, 1.4, 0));
+            const dir = new THREE.Vector3(nearest.pos.x - bot.pos.x, 0.6, nearest.pos.z - bot.pos.z);
+            if (ctx.throwGrenade('molotov', origin, dir, bot.name)) {
+              bot.molotovReady = false;
+              if (ctx.radio) ctx.radio(`${bot.name}: Molotov out — ${bot.goalSite === 'A' ? 'Short A' : 'Short B'} is burning`, 'ashen');
+            }
+          }
+        }
         // defenders hold near their site, or rotate to the planted site
         const goal = bomb.state === 'planted' ? world.sites[bomb.site].center : world.sites[bot.goalSite].center;
         const d = Math.hypot(bot.pos.x - goal.x, bot.pos.z - goal.z);

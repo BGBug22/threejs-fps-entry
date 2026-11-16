@@ -1,4 +1,4 @@
-// Yard 7 "Emberline Works": a dusk industrial yard, 36 x 28 m, built from boxes and
+// Yard 7 "Emberline Works": a bright daylight industrial yard, 36 x 28 m, built from boxes and
 // cylinders. Two bomb sites (A Foundry north-west, B Silos north-east), three lanes
 // (west, mid, east) split by a mid wall with three gaps, and cover everywhere a
 // firefight needs it. Every solid is a collider for players and bots and a surface
@@ -130,7 +130,43 @@ export function createWorld(scene) {
   box(5.6, 0.5, 0.5, 12.2, 5.4, -10.8, mats.hairline, false);
   box(1.2, 1.1, 1.2, 8.4, 0.55, -10.6, mats.hairline);
 
+  // The Beacon: a red-and-white striped lighthouse tower at the north end of
+  // the mid lane, taller than the walls — the yard's landmark, readable in one
+  // look from the attackers' spawn and straight through the west gap (Lantern
+  // Rock's trick: one unmistakable landmark beats a generic industrial yard).
+  // It stands at the edge of Site A, clear of the furnace, the plant zone's
+  // centre and every waypoint, so it is cover, not a blocker. The tower is
+  // solid; its lamp glows over both sites.
+  const beaconRed = new THREE.MeshStandardMaterial({ color: new THREE.Color('#d63a2f'), roughness: 0.6, metalness: 0.1 });
+  const beaconWhite = new THREE.MeshStandardMaterial({ color: new THREE.Color('#f5efe4'), roughness: 0.6, metalness: 0.05 });
+  const BEACON_X = -9.5;
+  const BEACON_Z = -12.8;
+  for (let i = 0; i < 4; i += 1) {
+    cylinder(1.05, 1.15, 2.5, BEACON_X, 1.25 + i * 2.5, BEACON_Z, i % 2 === 0 ? beaconRed : beaconWhite, 20);
+  }
+  const gallery = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.3, 0.5, 20), darkMat);
+  gallery.position.set(BEACON_X, 10.25, BEACON_Z);
+  gallery.castShadow = true;
+  gallery.receiveShadow = true;
+  group.add(gallery);
+  const beaconLamp = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 16, 12),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color('#ffd23e'), emissive: new THREE.Color('#ffb300'), emissiveIntensity: 4, roughness: 0.3 }),
+  );
+  beaconLamp.position.set(BEACON_X, 11, BEACON_Z);
+  group.add(beaconLamp);
+  const beaconLight = new THREE.PointLight(new THREE.Color('#ffb300'), 40, 26, 1.6);
+  beaconLight.position.set(BEACON_X, 11, BEACON_Z);
+  scene.add(beaconLight);
+
   // Cover: shipping containers and crates on the three lanes.
+  // The west teal container sits at z 3.5, south of the mid wall — NOT at
+  // z -4: from the cover camera (-15, 4) the sightline to the Site A
+  // defenders threads the west gap and crosses z -4 at x -10.4..-4.2, so a
+  // container at (-9, -4) stands dead in it and the burst's raycast never
+  // sees a defender (ammo stayed 25/25, no killfeed). At z 3.5 it is 6 m
+  // east of the camera, clear of every sightline north, and the deepened
+  // teal (#0f7f96) keeps its sunlit face from blowing out into a wash.
   box(6, 2.6, 2.4, -9, 1.3, 3.5, mats.teal);
   box(6, 2.6, 2.4, 9, 1.3, 3.5, rustMat);
   box(2.4, 2.6, 6, -15.6, 1.3, -6.5, mats.surface);
@@ -171,10 +207,12 @@ export function createWorld(scene) {
   addSign(signTexture('B', 'SILOS · SITE B', '#0b1d20', '#7de3f0'), 9, 2.25, 12, 3.6, -13.9);
   addSign(signTexture('7', 'YARD 7 — EMBERLINE WORKS', '#3a1e08', '#ffe9c4'), 6, 1.5, 0, 3.5, -1.68);
 
-  // Light: a high warm sunset sun, a bright sky fill, and a sky gradient.
-  const sky = new THREE.HemisphereLight(new THREE.Color('#ffd9a0'), new THREE.Color('#7a5230'), 1.7);
+  // Light: a high bright DAY sun over the warm yard, a bright sky fill, and a
+  // sky gradient. v3 lifts every light over v2 (hemisphere 1.7→2.2, sun
+  // 4.2→5.0, fill 1.0→1.4) so the yard reads in daylight, not dusk.
+  const sky = new THREE.HemisphereLight(new THREE.Color('#cfe4f7'), new THREE.Color('#7a5230'), 2.2);
   scene.add(sky);
-  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb45e'), 4.2);
+  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb45e'), 5.0);
   sun.position.set(-22, 12, 10);
   sun.target.position.set(4, 0, -6);
   sun.castShadow = true;
@@ -186,7 +224,7 @@ export function createWorld(scene) {
   sun.shadow.camera.far = 70;
   sun.shadow.bias = -0.0006;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight(new THREE.Color('#9ab4cc'), 1.0);
+  const fill = new THREE.DirectionalLight(new THREE.Color('#9ab4cc'), 1.4);
   fill.position.set(10, 12, -12);
   scene.add(fill);
   const furnaceLight = new THREE.PointLight(new THREE.Color('#ff6a00'), 22, 14, 1.8);

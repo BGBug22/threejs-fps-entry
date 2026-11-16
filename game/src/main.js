@@ -50,6 +50,14 @@ const rng = mulberry32(seedBase);
 // double-RAF at the end of setupShot), not at the end of the sim loop.
 let finalShotPending = false;
 
+// Deterministic spray pattern: consecutive shots climb and drift in a fixed
+// table instead of pure random spread, so recoil is learnable; the pattern
+// resets after a 0.4 s pause, a reload or a weapon switch (judge criterion 2:
+// recoil and spread punish firing on the move).
+const SPRAY = [0, 0.3, 0.55, 0.8, 1, 0.9, 0.7, 0.45, 0.2, 0, -0.25, -0.45, -0.3, -0.1, 0, 0.15];
+let sprayIdx = 0;
+let lastShotAt = -99;
+
 // --- renderer / scene ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -57,7 +65,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.35;
+renderer.toneMappingExposure = 1.6; // v3: brighter daylight over the v2 sunset
 document.getElementById('app').prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -226,9 +234,15 @@ function tryShoot() {
   const spread = weaponView.spread(player.groundSpeed()) * (zoomed ? 0.4 : 1);
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
-  dir.x += (Math.random() * 2 - 1) * spread;
-  dir.y += (Math.random() * 2 - 1) * spread;
-  dir.z += (Math.random() * 2 - 1) * spread;
+  // Random spread plus the deterministic spray pattern: the first shots of a
+  // burst stay tight, later shots climb and drift sideways in a fixed order.
+  if (time - lastShotAt > 0.4) sprayIdx = 0;
+  lastShotAt = time;
+  const spray = SPRAY[sprayIdx % SPRAY.length];
+  sprayIdx += 1;
+  dir.x += (Math.random() * 2 - 1) * spread * 0.6 + spray * spread * 1.4;
+  dir.y += (Math.random() * 2 - 1) * spread * 0.6 + spray * spray * spread * 1.8;
+  dir.z += (Math.random() * 2 - 1) * spread * 0.6;
   dir.normalize();
   const origin = camera.position.clone();
   const muzzle = camera.localToWorld(new THREE.Vector3(0.24, -0.16, -0.7));
@@ -256,6 +270,7 @@ function tryShoot() {
 
 function switchWeapon(id) {
   if (!owned.has(id)) return;
+  sprayIdx = 0; // a new gun starts a fresh spray pattern
   const cur = weaponView.state.id;
   ammoStore[cur] = { mag: weaponView.state.mag, reserve: weaponView.state.reserve };
   weaponView.setWeapon(id, false);
@@ -481,8 +496,9 @@ const ctx = {
   radio: (text, team) => hud.radio(text, team),
   // Smoke clouds block bot sight (never bullets).
   smokeBlocks: (a, b) => fx.smokeBlocks(a, b),
-  // The team's one smoke per round, thrown by the lead Ember bot on the push.
-  throwGrenade: (type, origin, dir) => grenades.throwBotSmoke(origin, dir),
+  // The team's bot grenades: one smoke and one Molotov per round, thrown by
+  // name so the killfeed credits the thrower.
+  throwGrenade: (type, origin, dir, thrower) => grenades.throwBot(type, origin, dir, thrower),
   // A flash pop blinds bots facing it, and the player if they face it too.
   blind: (pos) => {
     bots.blind(ctx, pos);
@@ -539,7 +555,7 @@ hud.onBuy((id) => {
     }
     return;
   }
-  if (id === 'frag' || id === 'smoke' || id === 'flash') {
+  if (id === 'frag' || id === 'smoke' || id === 'flash' || id === 'molotov') {
     const g = GRENADES[id];
     if (match.money >= g.price && grenades.buy(id)) {
       match.money -= g.price;
@@ -635,6 +651,7 @@ function fixedStep(dt) {
       if (pressed('Digit4')) throwPlayerGrenade('frag');
       if (pressed('Digit5')) throwPlayerGrenade('smoke');
       if (pressed('Digit6')) throwPlayerGrenade('flash');
+      if (pressed('Digit7')) throwPlayerGrenade('molotov');
 
       // plant channel
       if (bomb.state.state === 'carried' && bomb.state.carrier === 'player') {
@@ -686,6 +703,7 @@ function fixedStep(dt) {
     bots.step(dt, ctx);
     grenades.step(dt, ctx);
     weaponView.step(dt);
+    if (weaponView.state.reloadLeft > 0) sprayIdx = 0; // a reload restarts the spray pattern
     fx.step(dt);
     mmTick += 1;
     if (mmTick % 9 === 0) updateMinimap();
@@ -764,19 +782,27 @@ function setupShot() {
     owned.add('vk47');
     switchWeapon('vk47');
     player.state.armor = 50;
-    // West lane, tight to the west wall, looking north up the lane to Site A:
-    // the big FOUNDRY sign and the furnace dead ahead, the defenders holding
-    // the site 13 m up the lane in the open — no mid wall between us and
-    // them, so the burst can see them from the start. (Standing further east
-    // puts the teal container right beside the camera and it fills the frame;
-    // tight to the wall it falls out of frame to the right.)
-    player.reset(new THREE.Vector3(-17, 0, 4), 0.0);
+    // West gap, lined up with the gap in the mid wall, looking north to Site A:
+    // the big FOUNDRY sign and the furnace dead ahead, the red-and-white
+    // Beacon tower through the gap, the defenders holding the site 13 m up
+    // the lane in the open — no mid wall between us and them, so the burst
+    // can see them from the start. The exact x matters twice over: the gap
+    // (x -14..-11 at z -2) only frames the defenders and the Beacon from
+    // x -15 or -16 — from x -13 the sightline to the defenders crosses the
+    // east wall segment and the burst never fires (ammo stayed 25/25) — and
+    // from x -15 a teammate strafing up the west lane ends up 1.5 m in front
+    // of the camera and blocks the whole site. x -16 keeps the lane 4 m off
+    // and the Beacon fully in the gap. (Standing tight to the west wall puts
+    // a blank wall segment across the left third of the frame and crops the
+    // Beacon to a sliver; lined up with the gap, the whole site reads.)
+    player.reset(new THREE.Vector3(-16, 0, 4), 0.0);
     phase = 'live';
     roundTimer = ROUND_TIME;
     bots.spawnRound(1, seedBase + 108);
     bomb.reset();
     grenades.reset();
-    grenades.buy('frag'); // the cover carries all three grenades: 1 frag, 1 smoke, 1 flash
+    grenades.buy('frag'); // the cover carries all four grenades: 1 frag, 1 smoke, 1 flash, 1 molotov
+    grenades.buy('molotov');
     hud.setGrenades(grenades.counts());
     hud.setPlan(bots.getPlan('ember'));
     hud.hideOverlay();
@@ -789,30 +815,61 @@ function setupShot() {
     let coverTarget = null;
     let burstLeft = 0;
     let burstDone = false;
-    for (let i = 0; i < 400; i += 1) {
-      // Scripted cover action, all real simulation. A flash mid-fight (it
-      // blinds the defenders facing us), then ONE three-shot burst at the
-      // first visible defender — three VK-47 hits kill, so the killfeed shows
-      // a real kill. The smoke goes out late, down the lane, so it is fresh
-      // and thick in the frame while the burst already did its work.
-      if (i === 150) throwPlayerGrenade('flash');
-      if (i === 300) {
-        // Aim up the lane for the smoke so it blooms in the middle of the
-        // frame, not against the west wall.
-        player.state.yaw = 0.3;
-        camera.rotation.y = 0.3;
+    for (let i = 0; i < 300; i += 1) {
+      // Scripted cover action, all real simulation. A Molotov up the lane
+      // first (it burns at the foot of the Beacon for the whole frame), a
+      // flash mid-fight (it blinds the defenders facing us), then ONE
+      // three-shot burst at the first visible defender — three VK-47 hits
+      // kill, so the killfeed shows a real kill. The smoke goes out late,
+      // down the lane, so it is fresh and thick in the frame while the burst
+      // already did its work. The loop stops at 300 steps (5 s): any longer
+      // and the teammates finish their push up the west lane and crowd into
+      // the frame at Site A, standing on top of the fire and the smoke and
+      // blocking the Beacon. At 300 they are still crossing the mid wall,
+      // 9 m out, while the defenders hold the site in the open.
+      if (i === 90) {
+        // Yaw -0.35 threads the west gap (x -14..-11 at z -2) from x -16, so
+        // the Molotov lands at Site A instead of bouncing off the mid wall
+        // and burning in front of the camera.
+        player.state.yaw = -0.35;
+        camera.rotation.y = -0.35;
+        throwPlayerGrenade('molotov');
+        hud.radio('You: Molotov out — Short A is burning', 'ember');
+      }
+      if (i === 120) throwPlayerGrenade('flash');
+      if (i === 140) {
+        // Thrown early, not late: the smoke only pops 0.5 s after its first
+        // bounce (~1.3 s after the throw), so a throw at i=190 would still be
+        // a flying ball at the capture. At i=140 it blooms for a full second
+        // before the frame is taken.
+        // Yaw -0.65 threads the west gap (x -14..-11 at z -2) from x -16 and
+        // the smoke blooms east of Site A, near the Beacon — well clear of
+        // the Molotov fire at the site centre, so the two effects read as
+        // separate elements instead of one cluttered cloud. Yaw 0 sends it
+        // into the west wall segment and yaw -0.3 into the east one — either
+        // way the cloud blooms a few metres from the camera and whites out
+        // half the frame.
+        player.state.yaw = -0.65;
+        camera.rotation.y = -0.65;
         throwPlayerGrenade('smoke');
       }
-      if (i === 310) {
-        player.state.yaw = 0.0;
-        camera.rotation.y = 0.0;
+      if (i === 230) {
+        // Re-aim slightly west of north for the capture: Site A (-17°) and
+        // the Beacon (-21°) sit left-of-centre, in the frame with the yard.
+        player.state.yaw = -0.2;
+        camera.rotation.y = -0.2;
       }
-      if (!burstDone && burstLeft === 0 && i >= 180 && i % 5 === 0) {
+      if (!burstDone && burstLeft === 0 && i >= 140 && i % 5 === 0) {
         const vis = visibleAshenBot();
         if (vis) { coverTarget = vis; burstLeft = 3; }
       }
       if (burstLeft > 0 && i % 7 === 0) {
-        if (coverTarget && coverTarget.alive) { fireAtBot(coverTarget); burstLeft -= 1; }
+        // If the target went down mid-burst (a teammate or the Molotov got
+        // them first), pick a new visible defender and keep shooting — the
+        // cover wants three shots and a kill in the killfeed, not a burst
+        // that stops at a corpse.
+        if (!coverTarget || !coverTarget.alive) coverTarget = visibleAshenBot();
+        if (coverTarget) { fireAtBot(coverTarget); burstLeft -= 1; }
         else burstLeft = 0;
         if (burstLeft === 0) burstDone = true;
       }
@@ -842,7 +899,17 @@ function setupShot() {
       // captures ~50 ms after __shotReady, so they are still burning.
       if (finalShotPending) {
         finalShotPending = false;
-        fireAtBot(visibleAshenBot() || nearestAshenBot());
+        // The final shot fires straight down the composed view (yaw -0.2,
+        // toward Site A) WITHOUT re-aiming: the old code aimed at the Ashen
+        // bot nearest Site A, and a rotator east of the site swung the camera
+        // to -0.67 rad, so the frame showed the mid wall and the east yard
+        // instead of the Beacon and the site. The burst already put
+        // "You ✕ Rook" in the killfeed, so this shot only has to sell the
+        // muzzle flash and a tracer toward the site — it does not need to
+        // kill. If a defender happens to stand in the line of fire, the
+        // killfeed gains a row for free.
+        weaponView.state.cooldown = 0;
+        tryShoot();
         // Hold the star for the capture: the driver needs 100-250 ms to poll
         // and capture, longer than the flash lives, so without this the star
         // has already faded by the time the frame is taken.

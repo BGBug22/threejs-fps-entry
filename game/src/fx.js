@@ -11,6 +11,7 @@ const SMOKE_LIFE = 12;
 const SMOKE_RADIUS = 2.4;
 
 export function createFx(scene) {
+  let elapsed = 0;
   const tracers = [];
   for (let i = 0; i < TRACER_POOL; i += 1) {
     const geometry = new THREE.BufferGeometry();
@@ -65,6 +66,44 @@ export function createFx(scene) {
     smokes.push({ group, parts, life: 0, pos: new THREE.Vector3(), radius: SMOKE_RADIUS });
   }
   let smokeCursor = 0;
+
+  // Molotov fire: pooled patches of flame cones + a light, burning ~6 s. A fire
+  // zone is area denial: grenades.js ticks damage on anything standing in it.
+  const FIRE_POOL = 3;
+  const FIRE_LIFE = 6;
+  const FIRE_RADIUS = 3.2;
+  const fires = [];
+  for (let i = 0; i < FIRE_POOL; i += 1) {
+    const group = new THREE.Group();
+    const cones = [];
+    for (let j = 0; j < 5; j += 1) {
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(0.8, 2.2, 8),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(j % 2 ? '#ffd23e' : '#ff7a1a'), transparent: true, opacity: 0.88, depthWrite: false }),
+      );
+      cone.position.set((j % 3 - 1) * 1.5, 1.1, j < 3 ? -1.1 : 1.1);
+      group.add(cone);
+      cones.push(cone);
+    }
+    group.visible = false;
+    scene.add(group);
+    const light = new THREE.PointLight(new THREE.Color('#ff7a1a'), 0, 12, 1.8);
+    scene.add(light);
+    fires.push({ group, cones, light, life: 0, pos: new THREE.Vector3(), radius: FIRE_RADIUS });
+  }
+  let fireCursor = 0;
+
+  function fire(pos) {
+    const f = fires[fireCursor];
+    fireCursor = (fireCursor + 1) % FIRE_POOL;
+    f.pos.copy(pos);
+    f.pos.y = 0;
+    f.group.position.copy(f.pos);
+    f.life = FIRE_LIFE;
+    f.group.visible = true;
+    f.light.position.set(pos.x, 1.2, pos.z);
+    f.light.intensity = 60;
+  }
 
   // Flash pop: a white sphere + light at the burst, gone in a blink.
   const flashBall = new THREE.Mesh(
@@ -174,6 +213,7 @@ export function createFx(scene) {
   }
 
   function step(dt) {
+    elapsed += dt;
     for (const t of tracers) {
       if (t.life <= 0) continue;
       t.life -= dt;
@@ -219,6 +259,18 @@ export function createFx(scene) {
       flashLight.intensity = 120 * k;
       if (flashLife <= 0) { flashBall.visible = false; flashLight.intensity = 0; }
     }
+    // Molotov flames flicker and shrink as the pool burns out.
+    for (const f of fires) {
+      if (f.life <= 0) continue;
+      f.life -= dt;
+      const k = Math.max(0, f.life) / FIRE_LIFE;
+      for (let i = 0; i < f.cones.length; i += 1) {
+        const s = (0.7 + 0.3 * Math.sin(elapsed * 13 + i * 2.1)) * (0.5 + 0.5 * k);
+        f.cones[i].scale.set(s, s * (0.8 + 0.4 * k), s);
+      }
+      f.light.intensity = 60 * k;
+      if (f.life <= 0) { f.group.visible = false; f.light.intensity = 0; }
+    }
     shake = Math.max(0, shake - dt * 1.8);
   }
 
@@ -229,6 +281,8 @@ export function createFx(scene) {
     smoke,
     smokeBlocks,
     flashBurst,
+    fire,
+    fireZones() { return fires.filter((f) => f.life > 0); },
     step,
     get shake() { return shake; },
     clear() {
@@ -243,6 +297,7 @@ export function createFx(scene) {
       flashLife = 0;
       flashBall.visible = false;
       flashLight.intensity = 0;
+      for (const f of fires) { f.life = 0; f.group.visible = false; f.light.intensity = 0; }
       shake = 0;
     },
   };

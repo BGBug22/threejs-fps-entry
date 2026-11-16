@@ -116,7 +116,7 @@
     position: absolute; top: 14px; right: 16px; z-index: 7; text-align: right;
     font-size: 13px; line-height: 1.7; pointer-events: none;
   }
-  .feed-row { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; margin-bottom: 4px; display: inline-block; }
+  .feed-row { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; margin-bottom: 4px; display: block; width: max-content; margin-left: auto; }
   .feed-ember { color: var(--accent); font-weight: 700; }
   .feed-ashen { color: var(--teal); font-weight: 700; }
 
@@ -250,14 +250,14 @@
     <div id="weapon-name">P9 SIDEARM</div>
     <div id="ammo"><span id="ammo-mag">15</span> <span id="ammo-reserve">/ 60</span></div>
     <div id="money-value">$800</div>
-    <div id="grenades-line">4 FRAG 0 · SMOKE 1 · FLASH 0</div>
+    <div id="grenades-line">4 FRAG 0 · SMOKE 1 · FLASH 0 · MOLOTOV 0</div>
   </div>
 
   <div id="keys">
     <b>WASD</b> move &nbsp; <b>Mouse</b> aim &nbsp; <b>Shift</b> walk<br>
     <b>Space</b> jump &nbsp; <b>Ctrl</b> crouch &nbsp; <b>R</b> reload<br>
     <b>E</b> plant &nbsp; <b>B</b> buy &nbsp; <b>1–5</b> weapons &nbsp; <b>Tab</b> score<br>
-    <b>4</b> frag &nbsp; <b>5</b> smoke &nbsp; <b>6</b> flash
+    <b>4</b> frag &nbsp; <b>5</b> smoke &nbsp; <b>6</b> flash &nbsp; <b>7</b> molotov
   </div>
 
   <div id="banner" hidden><div id="banner-title"></div><div id="banner-sub"></div></div>
@@ -283,7 +283,7 @@
 
   <div id="overlay">
     <div id="overlay-title">EMBERLINE</div>
-    <div id="overlay-copy">Round-based tactical FPS. Plant the Spark at Foundry or Silos, or eliminate the Ashen team. Bots hear gunfire, call it on the radio and play a team plan. Throw smoke and flash with 5 and 6, frag with 4. First to 5 rounds takes the yard.</div>
+    <div id="overlay-copy">Round-based tactical FPS. Plant the Spark at Foundry or Silos, or eliminate the Ashen team. The red-and-white Beacon tower marks Site A. Bots hear gunfire, call it on the radio and play a team plan. Throw frag, smoke, flash and Molotov with 4, 5, 6 and 7. First to 5 rounds takes the yard.</div>
     <button id="play" type="button">Click to play</button>
     <div id="overlay-keys">
       <b>WASD</b> move &nbsp; <b>Mouse</b> aim &nbsp; <b>Left click</b> fire &nbsp; <b>R</b> reload<br>

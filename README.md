@@ -4,17 +4,31 @@
 
 Entry for the [make.fun threejs-fps-02 bounty](https://make.fun/bounty/threejs-fps-02) — "Make the best three.js tactical FPS", $1,000 in USDC.
 
-# EMBERLINE v2 — Tactical FPS
+# EMBERLINE v3 — Tactical FPS
 
 A round-based tactical FPS in the browser, built with three.js 0.187.0 and no
 build step: static files, no network, single-player against bots.
 
-**The game.** You are Ember, attacking a bright sunset yard ("Yard 7 —
+**The game.** You are Ember, attacking a bright daylight yard ("Yard 7 —
 Emberline Works") with four bot teammates against five Ashen defenders. Plant
 the Spark at Foundry (Site A) or Silos (Site B), or eliminate the other team.
 First to 5 rounds (max 9) takes the yard. Between rounds you earn money —
 $300 per kill, $300 for planting, $3,250 for a round win — and spend it on
 better guns (SMG-9, VK-47, M4R Carbine, AWP-L), a plated vest, and grenades.
+
+**v3 — what the winners do that v2 did not.** A bright DAY sky (pale blue,
+brighter sun and fill) over the warm sunset yard, and a red-and-white striped
+**Beacon lighthouse tower** over Site A — the map's landmark in one look,
+Lantern Rock's trick. A **Molotov** (key 7, buyable, $300): a burning pool
+that deals 25 damage per second for 6 seconds to anyone standing in it, so
+it denies a lane or a site push — and the Ashen defender Rook throws one of
+his own when the attackers close in on Site A, so grenades are not a
+player-only toy. Shots now follow a **deterministic spray pattern**: bursts
+climb and drift in a fixed order that resets after a pause, a reload or a
+weapon switch, so recoil is learnable instead of pure random spread. The
+cover shot scripts all four grenades at once: Molotov burning at the foot of
+the Beacon, a flash mid-fight, smoke down the lane, and a three-shot burst
+with a star muzzle flash and tracer.
 
 **v2 — what the winners do that v1 did not.** Bots hear gunfire and explosions,
 turn toward the sound, walk over to look, and say so on the radio ("Vex: Heard
@@ -30,8 +44,8 @@ and rail, with a star-shaped muzzle flash and tracers.
 
 **Controls.** WASD move, mouse aim, left click fire, R reload, Space jump,
 Ctrl crouch, E plant the Spark (hold still on a site), B buy menu (freeze
-time), 1–5 / wheel switch weapons, 4 frag / 5 smoke / 6 flash grenades, right
-mouse scope the AWP-L, Tab scoreboard, M mute, Esc release the mouse.
+time), 1–5 / wheel switch weapons, 4 frag / 5 smoke / 6 flash / 7 molotov
+grenades, right mouse scope the AWP-L, Tab scoreboard, M mute, Esc release the mouse.
 
 **How it plays.** Bots walk a waypoint graph, hold or push sites, rotate when
 the Spark is planted, and fight with the same hitscan rules you do — damage,
@@ -64,8 +78,8 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 - `game/src/weapons.js` — the five guns and the multi-part view model
 - `game/src/bots.js` — the nine bots: waypoints, perception, hearing, radio callouts, team plan, bursts, plant/defuse
 - `game/src/bomb.js` — the Spark: carry, drop, plant, 35 s countdown
-- `game/src/grenades.js` — frag, smoke and flash: throws, fuses, radius damage, sight-blocking smoke, blinding flash
-- `game/src/fx.js` — tracers, impact sparks, explosion, smoke clouds, flash pop
+- `game/src/grenades.js` — frag, smoke, flash and molotov: throws, fuses, radius damage, sight-blocking smoke, blinding flash, burning fire pools
+- `game/src/fx.js` — tracers, impact sparks, explosion, smoke clouds, flash pop, molotov fire
 - `game/src/audio.js` — synthesised WebAudio sounds, no audio files
 - `game/src/input.js` — keys, mouse look, pointer lock
 - `game/src/hud.js` — the DOM HUD: minimap, radio log, plan line, grenade counts
@@ -77,8 +91,9 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 **Shots.** The screenshots are deterministic: `?shot=start|buy|play|end&seed=1`
 sets the scene (menu, buy menu, a live firefight 7 seconds in, match over)
 and the game sets `window.__shotReady` once the frame is painted. The play
-shot scripts a real fight: a smoke toward Site A, a flash mid-fight, aimed
-shots that kill, and a final shot right before the capture so the frame holds
-the star muzzle flash and a fresh tracer.
+shot scripts a real fight: a Molotov up the lane burning at the foot of the
+Beacon, a flash mid-fight, a smoke toward Site A, aimed shots that kill, and a
+final shot right before the capture so the frame holds the star muzzle flash
+and a fresh tracer.
 
 All art, names and sounds are original — no assets from any commercial game.
